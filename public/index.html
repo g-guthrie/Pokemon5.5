@@ -127,10 +127,8 @@
               <button class="theater-btn" data-theater-toggle title="Theater mode — just the client (t)">&#x26F6;</button>
             </header>
             <div class="viewport native-stage" id="live-viewport-battle">
-              <iframe id="live-frame-battle" title="Battle view (Player 1 native client)" data-frame-src="/showdown-frame.html?role=p1&theme=dark&drive=parent" allow="autoplay"></iframe>
-              <div class="controls-overlay hidden" id="live-overlay">
-                <iframe id="live-overlay-frame" title="Player 2 native controls" data-frame-src="/showdown-frame.html?role=p2&controls=1&theme=dark&drive=parent"></iframe>
-              </div>
+              <iframe id="live-frame-battle" title="Battle view (Player 1 native client)" data-frame-src="/showdown-frame.html?role=p1&theme=dark&drive=parent&hidecontrols=1" allow="autoplay"></iframe>
+              <div class="controls-overlay deck-host" id="live-deck" data-side="p1" aria-label="Decision deck"></div>
             </div>
           </article>
 
@@ -218,7 +216,7 @@
             </header>
             <div class="viewport native-stage" id="replay-viewport-battle">
               <div class="stage-placeholder" id="replay-placeholder">Pick a recorded match above &mdash; it replays here, presses and all.</div>
-              <div class="controls-overlay hidden" id="replay-overlay"></div>
+              <div class="controls-overlay deck-host hidden" id="replay-deck" data-side="p1" aria-label="Replay decision deck"></div>
             </div>
           </article>
 

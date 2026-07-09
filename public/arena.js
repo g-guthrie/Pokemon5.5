@@ -285,16 +285,325 @@ function renderMind(container, data, options = {}) {
   if (footer.children.length) container.appendChild(footer);
 }
 
-/* ---------------- alternating native controls overlay ---------------- */
+/* ---------------- decision deck ---------------- */
 
-// The stage is Player 1's full native client. When Player 2 acts, its native
-// controls-only frame is overlaid exactly on the client's controls column
-// (0,370 to the client bottom, in unscaled client coordinates), so the battle
-// screen never changes while the control section alternates between players.
-function setControlsOwner(overlayEl, ownerEl, side) {
-  overlayEl.classList.toggle('hidden', side !== 'p2');
+// The stage is Player 1's full native client with its own controls hidden;
+// our decision deck sits exactly over the controls region and renders the
+// acting player's real choice space — sprites, type-colored moves with
+// PP/power/accuracy, switch cards, Tera — from the same structured request
+// the models receive. Presses re-enact on these buttons.
+function setControlsOwner(deckEl, ownerEl, side) {
+  deckEl.dataset.side = side;
   ownerEl.dataset.side = side;
-  ownerEl.textContent = side === 'p2' ? 'P2 controls' : 'P1 controls';
+  ownerEl.textContent = side === 'p2' ? 'P2 deciding' : 'P1 deciding';
+}
+
+const SPRITE_BASE = 'https://play.pokemonshowdown.com/sprites';
+const dexCards = {moves: new Map(), species: new Map(), pending: null};
+
+function toDexId(name) {
+  return String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function spriteUrl(species) {
+  return `${SPRITE_BASE}/gen5/${toDexId(species)}.png`;
+}
+
+function typeIconUrl(type) {
+  return `${SPRITE_BASE}/types/${encodeURIComponent(type)}.png`;
+}
+
+async function ensureDexCards(moveNames, speciesNames) {
+  const missingMoves = [...new Set(moveNames)].filter(name => name && !dexCards.moves.has(name));
+  const missingSpecies = [...new Set(speciesNames)].filter(name => name && !dexCards.species.has(name));
+  if (!missingMoves.length && !missingSpecies.length) return;
+  try {
+    const query = new URLSearchParams({moves: missingMoves.join(','), species: missingSpecies.join(',')});
+    const response = await fetch(`/api/dex?${query}`);
+    const payload = await response.json();
+    for (const [name, card] of Object.entries(payload.moves || {})) dexCards.moves.set(name, card);
+    for (const [name, card] of Object.entries(payload.species || {})) dexCards.species.set(name, card);
+    for (const name of missingMoves) if (!dexCards.moves.has(name)) dexCards.moves.set(name, null);
+    for (const name of missingSpecies) if (!dexCards.species.has(name)) dexCards.species.set(name, null);
+  } catch {
+    // cards are decoration; the deck renders without them
+  }
+}
+
+// Distill a PlayerObservation's exact legal actions into per-slot controls:
+// unique moves (with their press slot numbers, targets, and Tera variants)
+// plus the switch options.
+function deckPlanFromObservation(observation) {
+  if (!observation) return null;
+  const slots = new Map();
+  const switches = new Map();
+  let hasTera = false;
+  const addPart = part => {
+    if (!part || !part.choice) return;
+    const tokens = String(part.choice).trim().split(/\s+/);
+    if (tokens[0] === 'move') {
+      const activeSlot = Number(part.activeSlot) || 1;
+      const moveSlot = Number(tokens[1]) || null;
+      if (!moveSlot) return;
+      if (!slots.has(activeSlot)) slots.set(activeSlot, new Map());
+      const moves = slots.get(activeSlot);
+      const key = `${moveSlot}`;
+      if (!moves.has(key)) {
+        moves.set(key, {
+          moveSlot,
+          name: part.move || `Move ${moveSlot}`,
+          pp: part.pp ?? null,
+          maxpp: part.maxpp ?? null,
+          targets: new Set(),
+          canTera: false,
+        });
+      }
+      const entry = moves.get(key);
+      if (part.targetSlot != null) entry.targets.add(Number(part.targetSlot));
+      if (part.allyTargetSlot != null) entry.targets.add(Number(part.allyTargetSlot));
+      if (String(part.choice).includes('terastallize')) {
+        entry.canTera = true;
+        hasTera = true;
+      }
+    } else if (tokens[0] === 'switch') {
+      const slot = Number(tokens[1]);
+      if (Number.isFinite(slot) && !switches.has(slot)) {
+        switches.set(slot, {slot, pokemon: part.pokemon || '', condition: part.condition || ''});
+      }
+    }
+  };
+  for (const action of observation.legalActions || []) {
+    if (Array.isArray(action.choices)) for (const part of action.choices) addPart(part);
+    else addPart(action);
+  }
+  const team = observation.self?.team || [];
+  const active = observation.self?.activePokemon || [];
+  return {
+    turn: observation.turn ?? null,
+    rqid: observation.requestId ?? null,
+    forceSwitch: (observation.legalActions || []).some(action =>
+      action.type === 'force-switch' || (action.choices || []).some(part => part.type === 'force-switch')),
+    hasTera,
+    slots: [...slots.entries()].sort(([a], [b]) => a - b).map(([activeSlot, moves]) => ({
+      activeSlot,
+      mon: active.find(mon => Number(mon.activeSlot ?? mon.slot) === activeSlot) || active[activeSlot - 1] || null,
+      moves: [...moves.values()].sort((a, b) => a.moveSlot - b.moveSlot),
+    })),
+    switches: [...switches.values()].sort((a, b) => a.slot - b.slot).map(entry => ({
+      ...entry,
+      mon: team.find(mon => Number(mon.slot) === entry.slot) || null,
+    })),
+  };
+}
+
+function deckHpParts(condition) {
+  return hpParts(condition);
+}
+
+function buildDeckMonHeader(mon, fallbackName) {
+  const head = el('div', 'deck-mon');
+  const img = document.createElement('img');
+  img.className = 'deck-sprite';
+  img.alt = '';
+  img.src = spriteUrl(mon?.species || mon?.name || fallbackName);
+  img.addEventListener('error', () => img.classList.add('hidden'));
+  head.appendChild(img);
+  const info = el('div', 'deck-mon-info');
+  info.appendChild(el('b', '', mon?.name || mon?.species || fallbackName || '?'));
+  const hp = deckHpParts(mon?.condition || '');
+  const bar = el('div', `mon-hp${hp.fainted ? '' : hp.pct <= 25 ? ' low' : hp.pct <= 55 ? ' mid' : ''}`);
+  const fill = el('i');
+  fill.style.width = `${hp.fainted ? 0 : hp.pct}%`;
+  bar.appendChild(fill);
+  info.appendChild(bar);
+  head.appendChild(info);
+  return head;
+}
+
+function buildDeckMoveButton(slot, move) {
+  const card = dexCards.moves.get(move.name);
+  const type = card?.type || 'Normal';
+  const button = el('button', `deck-move type-${toDexId(type)}`);
+  button.type = 'button';
+  button.dataset.pressMove = `${slot.activeSlot}:${move.moveSlot}`;
+  const icon = document.createElement('img');
+  icon.className = 'deck-type-icon';
+  icon.alt = type;
+  icon.src = typeIconUrl(type);
+  icon.addEventListener('error', () => icon.classList.add('hidden'));
+  button.appendChild(icon);
+  const label = el('span', 'deck-move-name', move.name);
+  button.appendChild(label);
+  const meta = el('span', 'deck-move-meta');
+  const bits = [];
+  if (card?.basePower) bits.push(`${card.basePower} BP`);
+  if (card?.accuracy && card.accuracy !== 'never misses') bits.push(`${card.accuracy}%`);
+  if (move.pp != null && move.maxpp != null) bits.push(`${move.pp}/${move.maxpp} PP`);
+  meta.textContent = bits.join(' · ');
+  button.appendChild(meta);
+  return button;
+}
+
+function buildDeckTargetRow(slot, opponentActive) {
+  const row = el('div', 'deck-targets hidden');
+  row.dataset.targetRow = String(slot.activeSlot);
+  const targetValues = new Set();
+  for (const move of slot.moves) for (const target of move.targets) targetValues.add(target);
+  for (const value of [...targetValues].sort((a, b) => a - b)) {
+    const chip = el('button', `deck-target ${value > 0 ? 'foe' : 'ally'}`);
+    chip.type = 'button';
+    chip.dataset.pressTarget = `${slot.activeSlot}:${value}`;
+    const mon = value > 0 ? opponentActive[value - 1] : null;
+    const img = document.createElement('img');
+    img.className = 'deck-sprite tiny';
+    img.alt = '';
+    img.src = spriteUrl(mon?.species || mon?.name || '');
+    img.addEventListener('error', () => img.classList.add('hidden'));
+    if (mon) chip.appendChild(img);
+    chip.appendChild(el('span', '', value > 0 ? (mon?.name || mon?.species || `Foe ${value}`) : 'Ally'));
+    row.appendChild(chip);
+  }
+  return row;
+}
+
+async function renderDeck(host, observation, side, options = {}) {
+  const plan = deckPlanFromObservation(observation);
+  host.dataset.side = side;
+  const deck = el('div', 'deck');
+  if (!plan || (!plan.slots.length && !plan.switches.length)) {
+    deck.appendChild(el('div', 'deck-waiting', options.idleText || 'Waiting for the next decision…'));
+    host.replaceChildren(deck);
+    return;
+  }
+  const moveNames = plan.slots.flatMap(slot => slot.moves.map(move => move.name));
+  const speciesNames = [
+    ...plan.slots.map(slot => slot.mon?.species || slot.mon?.name),
+    ...plan.switches.map(entry => entry.mon?.species || entry.pokemon),
+    ...(observation.opponent?.activePokemon || []).map(mon => mon?.species || mon?.name),
+  ];
+  await ensureDexCards(moveNames, speciesNames);
+
+  const opponentActive = observation.opponent?.activePokemon || [];
+  if (plan.forceSwitch || !plan.slots.length) {
+    deck.appendChild(el('div', 'deck-banner', 'Choose a replacement'));
+  }
+  const slotsRow = el('div', 'deck-slots');
+  for (const slot of plan.slots) {
+    const column = el('div', 'deck-slot');
+    const head = buildDeckMonHeader(slot.mon, `Slot ${slot.activeSlot}`);
+    if (plan.hasTera && slot.moves.some(move => move.canTera)) {
+      const tera = el('button', 'deck-tera');
+      tera.type = 'button';
+      tera.dataset.pressTera = String(slot.activeSlot);
+      tera.textContent = `⭐ Tera ${slot.mon?.teraType || ''}`.trim();
+      head.appendChild(tera);
+    }
+    column.appendChild(head);
+    const grid = el('div', 'deck-moves');
+    for (const move of slot.moves) grid.appendChild(buildDeckMoveButton(slot, move));
+    column.appendChild(grid);
+    column.appendChild(buildDeckTargetRow(slot, opponentActive));
+    slotsRow.appendChild(column);
+  }
+  if (plan.slots.length) deck.appendChild(slotsRow);
+  if (plan.switches.length) {
+    const bench = el('div', 'deck-bench');
+    for (const entry of plan.switches) {
+      const button = el('button', 'deck-switch');
+      button.type = 'button';
+      button.dataset.pressSwitch = String(entry.slot);
+      const img = document.createElement('img');
+      img.className = 'deck-sprite small';
+      img.alt = '';
+      img.src = spriteUrl(entry.mon?.species || entry.pokemon);
+      img.addEventListener('error', () => img.classList.add('hidden'));
+      button.appendChild(img);
+      const info = el('span', 'deck-switch-info');
+      info.appendChild(el('b', '', entry.mon?.name || entry.pokemon || `#${entry.slot}`));
+      const hp = deckHpParts(entry.mon?.condition || entry.condition || '');
+      const bar = el('span', `mon-hp${hp.fainted ? '' : hp.pct <= 25 ? ' low' : hp.pct <= 55 ? ' mid' : ''}`);
+      const fill = el('i');
+      fill.style.width = `${hp.fainted ? 0 : hp.pct}%`;
+      bar.appendChild(fill);
+      info.appendChild(bar);
+      button.appendChild(info);
+      bench.appendChild(button);
+    }
+    deck.appendChild(bench);
+  }
+  host.replaceChildren(deck);
+}
+
+/* ---- deck press animation: the model's cursor presses our buttons ---- */
+
+function deckCursor(host) {
+  const deck = host.querySelector('.deck');
+  if (!deck) return null;
+  let cursor = deck.querySelector('.deck-cursor');
+  if (!cursor) {
+    cursor = el('div', 'deck-cursor');
+    cursor.innerHTML =
+      '<svg width="22" height="30" viewBox="0 0 22 30" xmlns="http://www.w3.org/2000/svg">' +
+      '<path d="M2 1 L2 24 L8 18.5 L12 28 L16 26.2 L12.2 17 L20 16.5 Z" fill="#fff" stroke="#1c2b4a" stroke-width="1.6"/></svg>';
+    deck.appendChild(cursor);
+  }
+  return cursor;
+}
+
+async function deckPress(host, button) {
+  if (!button) return false;
+  const cursor = deckCursor(host);
+  if (!cursor) return false;
+  const deckRect = host.querySelector('.deck')?.getBoundingClientRect();
+  const rect = button.getBoundingClientRect();
+  if (!deckRect || !rect.width) return false;
+  const scale = deckRect.width / 640;
+  const x = (rect.left - deckRect.left + rect.width * 0.55) / scale;
+  const y = (rect.top - deckRect.top + rect.height * 0.6) / scale;
+  cursor.style.opacity = '1';
+  cursor.style.transform = `translate(${x}px, ${y}px)`;
+  await sleep(340);
+  button.classList.add('deck-pressing');
+  const ripple = el('span', 'deck-ripple');
+  ripple.style.left = `${x}px`;
+  ripple.style.top = `${y}px`;
+  host.querySelector('.deck')?.appendChild(ripple);
+  setTimeout(() => ripple.remove(), 600);
+  await sleep(180);
+  button.classList.remove('deck-pressing');
+  button.classList.add('deck-chosen');
+  await sleep(110);
+  return true;
+}
+
+async function animateDeckChoice(host, choice) {
+  const steps = String(choice || '').split(',').map(part => part.trim()).filter(Boolean);
+  for (const [index, step] of steps.entries()) {
+    const tokens = step.split(/\s+/);
+    const activeSlot = index + 1;
+    if (tokens[0] === 'move') {
+      const numbers = tokens.slice(1).filter(token => /^-?\d+$/.test(token)).map(Number);
+      const moveSlot = numbers[0];
+      const target = numbers.length > 1 ? numbers[1] : null;
+      if (step.includes('terastallize')) {
+        await deckPress(host, host.querySelector(`[data-press-tera="${activeSlot}"]`));
+      }
+      await deckPress(host, host.querySelector(`[data-press-move="${activeSlot}:${moveSlot}"]`));
+      if (target !== null) {
+        const row = host.querySelector(`[data-target-row="${activeSlot}"]`);
+        row?.classList.remove('hidden');
+        await sleep(140);
+        await deckPress(host, host.querySelector(`[data-press-target="${activeSlot}:${target}"]`));
+        await sleep(160);
+        row?.classList.add('hidden');
+      }
+    } else if (tokens[0] === 'switch') {
+      await deckPress(host, host.querySelector(`[data-press-switch="${tokens[1]}"]`));
+    }
+    await sleep(120);
+  }
+  const cursor = host.querySelector('.deck-cursor');
+  if (cursor) cursor.style.opacity = '0';
 }
 
 /* ---------------- viewport scaling (battle field only) ---------------- */
@@ -636,26 +945,72 @@ const live = {
   dispatching: false,
   choiceWaiters: {p1: null, p2: null},
   p1AnsweredTurn: 0,
-  frameReady: {p1: false, p2: false},
+  // p2 has no frame anymore: its presses land on the decision deck.
+  frameReady: {p1: false, p2: true},
+  // Per-role request observations from the role sockets, so the deck can
+  // render exactly the request each queued press answered (keyed by rqid).
+  requests: {p1: new Map(), p2: new Map()},
+  latestRequest: {p1: null, p2: null},
+  deckShown: '',
   log: [],
 };
 window.__arenaLive = live;
 
 function liveFrameKind(source) {
   if (source && source === $('live-frame-battle')?.contentWindow) return 'p1';
-  if (source && source === $('live-overlay-frame')?.contentWindow) return 'p2';
   return null;
 }
 
 function setLiveControlsOwner(side) {
-  setControlsOwner($('live-overlay'), $('live-controls-owner'), side);
+  setControlsOwner($('live-deck'), $('live-controls-owner'), side);
+}
+
+function rememberLiveRequest(role, observation) {
+  if (!observation) return;
+  live.latestRequest[role] = observation;
+  const rqid = observation.requestId;
+  if (rqid != null) {
+    live.requests[role].set(Number(rqid), observation);
+    if (live.requests[role].size > 10) {
+      live.requests[role].delete(live.requests[role].keys().next().value);
+    }
+  }
+  const actionable = !observation.waiting && !observation.ended && (observation.legalActions || []).length > 0;
+  live.pending[role] = actionable;
+  liveIdleView();
+  void pumpPressQueue();
 }
 
 // With no press animation in flight, show whichever player still owes a
-// decision (P1's controls are part of the base client; P2's are the overlay).
+// decision on the deck.
 function liveIdleView() {
   if (live.animating) return;
-  setLiveControlsOwner(live.pending.p2 && !live.pending.p1 ? 'p2' : 'p1');
+  const side = live.pending.p2 && !live.pending.p1 ? 'p2' : 'p1';
+  setLiveControlsOwner(side);
+  const observation = live.latestRequest[side];
+  const key = `${side}|${observation?.requestId ?? 'none'}`;
+  if (key !== live.deckShown) {
+    live.deckShown = key;
+    void renderDeck($('live-deck'), observation, side);
+  }
+}
+
+// Each role socket delivers that player's private request observations —
+// the same structured choice space the model sees — to drive the deck.
+function connectDeckSocket(role) {
+  const socket = new WebSocket(`${wsProtocol}//${location.host}/ws?role=${role}&battleId=${encodeURIComponent(BATTLE_ID)}`);
+  socket.addEventListener('message', event => {
+    let message;
+    try {
+      message = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    if (message.type === 'state' && message.state?.extracted) {
+      rememberLiveRequest(role, message.state.extracted);
+    }
+  });
+  socket.addEventListener('close', () => setTimeout(() => connectDeckSocket(role), 1200));
 }
 
 // Press dispatcher: presses visualize in turn order, Player 1 before Player 2
@@ -697,13 +1052,25 @@ async function pumpPressQueue() {
       const instant = live.pressQueue.length > 3;
       pressLog(`dispatch${instant ? ' (instant)' : ''} ${press.role} T${press.turn} ${press.choice}`);
       live.animating = press.role;
-      if (!instant) setLiveControlsOwner(press.role);
-      const frame = press.role === 'p2' ? $('live-overlay-frame') : $('live-frame-battle');
-      frame?.contentWindow?.postMessage(
-        {scope: 'showdown-arena', type: 'sd-choice', choice: press.choice, rqid: press.rqid, instant},
-        '*'
-      );
-      await waitForLiveChoiceDone(press.role, press.choice);
+      if (!instant) {
+        // Re-enact the press on the decision deck, on exactly the request
+        // this choice answered.
+        setLiveControlsOwner(press.role);
+        const observation = (press.rqid != null && live.requests[press.role].get(Number(press.rqid))) ||
+          live.latestRequest[press.role];
+        live.deckShown = `${press.role}|${observation?.requestId ?? 'none'}`;
+        await renderDeck($('live-deck'), observation, press.role);
+        await animateDeckChoice($('live-deck'), press.choice);
+      }
+      if (press.role === 'p1') {
+        // The base client froze awaiting this press; apply it instantly so
+        // its internal request state stays exact and the field plays on.
+        $('live-frame-battle')?.contentWindow?.postMessage(
+          {scope: 'showdown-arena', type: 'sd-choice', choice: press.choice, rqid: press.rqid, instant: true},
+          '*'
+        );
+        await waitForLiveChoiceDone(press.role, press.choice);
+      }
       live.animating = null;
     }
   } finally {
@@ -770,10 +1137,15 @@ function connectSpectatorSocket() {
       live.animating = null;
       live.pressQueue.length = 0;
       live.p1AnsweredTurn = 0;
-      live.frameReady = {p1: false, p2: false};
+      live.frameReady = {p1: false, p2: true};
+      live.requests.p1.clear();
+      live.requests.p2.clear();
+      live.latestRequest = {p1: null, p2: null};
+      live.deckShown = '';
       live.choiceWaiters.p1?.resolve();
       live.choiceWaiters.p2?.resolve();
       setLiveControlsOwner('p1');
+      void renderDeck($('live-deck'), null, 'p1', {idleText: 'New battle — waiting for the first decision…'});
       $('live-banner').classList.add('hidden');
       $('live-turn').textContent = '–';
       live.lastCallKey = {p1: '', p2: ''};
@@ -1061,11 +1433,11 @@ class ReplayEngine {
     this.pointer = 0;
     this.decisionsDone = 0;
     this.turn = 0;
-    // frames: 'base' = Player 1's full native client (field + log + controls);
-    // 'overlay' = Player 2's native controls, shown over the controls region.
-    this.frames = {base: null, overlay: null};
-    this.readyResolvers = {base: null, overlay: null};
-    this.choiceResolvers = {p1: null, p2: null};
+    // One frame: Player 1's full native client (field + log; controls hidden
+    // — the decision deck overlays that region for both players).
+    this.frames = {base: null};
+    this.readyResolvers = {base: null};
+    this.choiceResolvers = {p1: null};
     this.buildTimeline();
   }
 
@@ -1132,26 +1504,18 @@ class ReplayEngine {
   destroy() {
     this.generation += 1;
     this.playing = false;
-    for (const name of ['base', 'overlay']) {
-      this.frames[name]?.remove();
-      this.frames[name] = null;
-    }
+    this.frames.base?.remove();
+    this.frames.base = null;
     this.setControlsSide('p1');
+    $('replay-deck').classList.add('hidden');
   }
 
   frameName(source) {
-    for (const name of ['base', 'overlay']) {
-      if (this.frames[name]?.contentWindow === source) return name;
-    }
-    return null;
-  }
-
-  frameForRole(role) {
-    return role === 'p2' ? 'overlay' : 'base';
+    return this.frames.base?.contentWindow === source ? 'base' : null;
   }
 
   setControlsSide(side) {
-    setControlsOwner($('replay-overlay'), $('replay-controls-owner'), side);
+    setControlsOwner($('replay-deck'), $('replay-controls-owner'), side);
   }
 
   post(name, payload) {
@@ -1167,10 +1531,9 @@ class ReplayEngine {
   }
 
   onChoiceDone(source) {
-    const role = this.frameName(source) === 'overlay' ? 'p2' : 'p1';
-    if (this.choiceResolvers[role]) {
-      this.choiceResolvers[role]();
-      this.choiceResolvers[role] = null;
+    if (this.frameName(source) === 'base' && this.choiceResolvers.p1) {
+      this.choiceResolvers.p1();
+      this.choiceResolvers.p1 = null;
     }
   }
 
@@ -1180,40 +1543,45 @@ class ReplayEngine {
     });
   }
 
+  // The recorded PlayerObservation this decision was made from — the deck
+  // renders the exact choice space the model saw.
+  observationForDecision(decision) {
+    return this.artifact.observations?.[decision?.observationIndex]?.observation || null;
+  }
+
   async createFrames() {
     const viewport = $('replay-viewport-battle');
-    const overlayHost = $('replay-overlay');
     for (const iframe of viewport.querySelectorAll(':scope > iframe')) iframe.remove();
-    overlayHost.replaceChildren();
+    $('replay-deck').classList.remove('hidden');
+    void renderDeck($('replay-deck'), null, 'p1', {idleText: 'Replay starting…'});
     this.setControlsSide('p1');
 
-    const readiness = [this.frameReady('base'), this.frameReady('overlay')];
+    const readiness = [this.frameReady('base')];
     const base = document.createElement('iframe');
     base.title = 'Replay battle view (Player 1 native client)';
-    base.src = '/showdown-frame.html?role=p1&mode=replay&theme=dark';
+    base.src = '/showdown-frame.html?role=p1&mode=replay&theme=dark&hidecontrols=1';
     this.frames.base = base;
     viewport.appendChild(base);
-
-    const overlay = document.createElement('iframe');
-    overlay.title = 'Player 2 native controls (replay)';
-    overlay.src = '/showdown-frame.html?role=p2&mode=replay&controls=1&theme=dark';
-    this.frames.overlay = overlay;
-    overlayHost.appendChild(overlay);
 
     scaleAllViewports();
     await Promise.race([Promise.all(readiness), sleep(8000)]);
   }
 
   async resetFrames() {
-    const readiness = ['base', 'overlay'].map(name => this.frameReady(name));
-    for (const name of ['base', 'overlay']) this.post(name, {type: 'sd-reset'});
+    const readiness = [this.frameReady('base')];
+    this.post('base', {type: 'sd-reset'});
     this.setControlsSide('p1');
+    void renderDeck($('replay-deck'), null, 'p1', {idleText: 'Rewinding…'});
     await Promise.race([Promise.all(readiness), sleep(8000)]);
   }
 
   applyEntry(entry, instant) {
-    this.post(this.frameForRole(entry.role), {type: 'sd-protocol', chunk: entry.chunk, instant});
-    if (entry.role === 'p1') this.trackTurn(entry.chunk);
+    // Only Player 1's stream drives the client now; Player 2's recorded
+    // protocol exists in the timeline purely as decision anchors.
+    if (entry.role === 'p1') {
+      this.post('base', {type: 'sd-protocol', chunk: entry.chunk, instant});
+      this.trackTurn(entry.chunk);
+    }
   }
 
   chunkDelay(entry) {
@@ -1252,21 +1620,24 @@ class ReplayEngine {
     this.pointer += 1;
     const decision = this.decisionsByAnchor.get(anchorIndex);
     if (decision) {
-      // Alternate the visible control section to the player about to act.
+      // Show the acting player's recorded choice space on the deck and
+      // re-enact the press on our buttons.
       this.setControlsSide(decision.role);
+      await renderDeck($('replay-deck'), this.observationForDecision(decision), decision.role);
       this.ui.onDecision(decision);
-      await sleep(2400 / this.speed);
+      await sleep(1400 / this.speed);
       if (generation !== this.generation) return false;
-      // Press the real native buttons in that player's client.
-      this.post(this.frameForRole(decision.role), {type: 'sd-choice', choice: decision.choice});
-      await this.waitForChoiceDone(decision.role);
+      await animateDeckChoice($('replay-deck'), decision.choice);
+      if (decision.role === 'p1') {
+        // Keep the base client's request state exact (its own hidden
+        // controls still receive the press instantly).
+        this.post('base', {type: 'sd-choice', choice: decision.choice, instant: true});
+        await this.waitForChoiceDone('p1');
+      }
       if (generation !== this.generation) return false;
       this.decisionsDone = decision.ordinal + 1;
       if (decision.role === 'p2') {
-        // Give the submitted state a beat, then return to the base client so
-        // the field plays the turn unobstructed.
-        await sleep(700 / this.speed);
-        this.setControlsSide('p1');
+        await sleep(500 / this.speed);
       }
       await sleep(250 / this.speed);
     } else {
@@ -1340,7 +1711,11 @@ class ReplayEngine {
       this.pointer += 1;
       if (this.pointer % 24 === 0) await sleep(25);
     }
-    if (lastDecision) this.ui.onDecision(lastDecision, {instant: true});
+    if (lastDecision) {
+      this.setControlsSide(lastDecision.role);
+      void renderDeck($('replay-deck'), this.observationForDecision(lastDecision), lastDecision.role);
+      this.ui.onDecision(lastDecision, {instant: true});
+    }
     this.busy = false;
     this.ui.onProgress(this);
   }
@@ -1710,5 +2085,8 @@ if (!localStorage.getItem(HAS_BATTLED_KEY)) {
 void restoreKeyPanel();
 applySound();
 connectSpectatorSocket();
+connectDeckSocket('p1');
+connectDeckSocket('p2');
+void renderDeck($('live-deck'), null, 'p1', {idleText: 'The decision deck lights up when a battle starts.'});
 void pollLiveRun();
 setInterval(pollLiveRun, 1000);

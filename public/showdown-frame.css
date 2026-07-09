@@ -97,6 +97,13 @@ button[name="closeAndRematch"] {
   display: none !important;
 }
 
+/* Deck mode: the arena draws its own decision deck over the controls region.
+   visibility (not display) keeps the native buttons clickable for the press
+   machinery and preserves the client's layout math. */
+body[data-hide-controls="1"] .battle-controls {
+  visibility: hidden !important;
+}
+
 /* Controls-only frames render just the real native control bar (move/switch
    buttons). The Showdown client renders its room into a .ps-room appended to
    <body> (the #battle-root div is left empty), with the field and controls

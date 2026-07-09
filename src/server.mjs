@@ -5,6 +5,7 @@ import {fileURLToPath} from 'node:url';
 import {WebSocketServer} from 'ws';
 import {sanitizeText} from './agent-runtime.mjs';
 import {BattleSession} from './battle-session.mjs';
+import {moveCard, speciesCard} from './dex-context.mjs';
 import {
   buildOpenRouterBenchmarkPlan,
   runOpenRouterBenchmarkSuite,
@@ -82,6 +83,16 @@ const server = http.createServer((req, res) => {
   }
   if (url.pathname === '/api/models') {
     void listPickableModels(res);
+    return;
+  }
+  if (url.pathname === '/api/dex') {
+    // Move/species cards for the decision deck — same tooltip facts the
+    // prompt's dexContext carries, straight from the vendored dex.
+    const names = param => String(url.searchParams.get(param) || '').split(',').map(name => name.trim()).filter(Boolean).slice(0, 80);
+    sendJson(res, {
+      moves: Object.fromEntries(names('moves').map(name => [name, moveCard(name)]).filter(([, card]) => card)),
+      species: Object.fromEntries(names('species').map(name => [name, speciesCard(name)]).filter(([, card]) => card)),
+    });
     return;
   }
   if (url.pathname === '/api/key/validate' && req.method === 'POST') {

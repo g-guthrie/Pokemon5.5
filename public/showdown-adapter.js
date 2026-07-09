@@ -19,6 +19,10 @@
   // there is no field animation to wait for: render controls immediately and
   // let the press animation press the real native buttons.
   var controlsOnly = params.get('controls') === '1';
+  // The arena renders its own decision deck over the controls region; the
+  // native controls stay in the DOM (presses still land on them to keep the
+  // client's request state exact) but are visually hidden.
+  var hideControls = params.get('hidecontrols') === '1';
   // The official client's dark mode: rules are scoped under html.dark.
   if (params.get('theme') === 'dark') document.documentElement.classList.add('dark');
   // Parent-driven presses: the arena sequences press animations globally
@@ -639,6 +643,7 @@
   function boot() {
     debug('boot ' + role + (replayMode ? ' (replay)' : '') + (controlsOnly ? ' (controls)' : ''));
     if (controlsOnly && document.body) document.body.dataset.viewMode = 'controls';
+    if (hideControls && document.body) document.body.dataset.hideControls = '1';
     BattleSound.setMute(true);
     room = new BattleRoom({
       id: 'battle-localbenchmark',
