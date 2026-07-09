@@ -1,0 +1,581 @@
+# Pokemon Showdown Model Arena
+
+Local benchmark harness for model-vs-model Pokemon Showdown battles. The default
+format is official `[Gen 9] Random Doubles Battle` (`gen9randomdoublesbattle`)
+using the vendored Showdown server simulator, random team generator, and client.
+
+## What Is Here
+
+- `vendor/pokemon-showdown`: official Showdown server/simulator checkout.
+- `vendor/pokemon-showdown-client`: official Showdown client served under `/ps/`.
+- `src/battle-session.mjs`: local canonical battle wrapper and protocol relay.
+- `src/legal-choices.mjs`: pure Showdown request to exact legal choice builder.
+- `src/protocol-view.mjs`: Showdown protocol to visible history and known-info state.
+- `src/observation.mjs`: hidden-info-correct `PlayerObservation` primitives.
+- `src/prompt-pipeline.mjs`: versioned model prompt and response contract.
+- `src/agent-runtime.mjs`: shared stand-in, OpenAI, and OpenRouter agent interface.
+- `src/match-runner.mjs`: websocket match runner and JSON artifact writer.
+- `src/event-log.mjs`: newline-delimited event stream writer for replay/indexing.
+- `src/usage-summary.mjs`: provider-neutral token/cost usage normalization.
+- `src/ladder-runner.mjs`: pairwise battle batches with Elo updates.
+- `src/tournament-runner.mjs`: round-robin scheduler over multiple model specs.
+- `src/server.mjs`: local web server, websocket API, reset API, artifact browser.
+- `public/index.html` + `public/arena.js`: the LLM Arena — a spectator UI with
+  live model-vs-model viewing, per-model reasoning panels, animated button
+  clicks inside the official Showdown client, and a replay theater that plays
+  back any match artifact.
+- `public/operator.html` + `public/dual.js`: the operator console with raw
+  observations, quick-pick legal choices, ladder/tournament/benchmark controls,
+  and the artifact lab.
+
+## Setup
+
+```sh
+npm install
+npm run setup:showdown
+npm start
+```
+
+Open `http://localhost:3107`.
+
+## LLM Arena
+
+The default page is the arena: one battle screen, two model controllers. The
+models play headlessly — each receives a structured observation and returns
+one exact legal choice — and the arena visualizes those structured choices as
+animated button presses, like watching two joysticks drive one screen.
+
+The stage is literally the native Showdown client, in its official dark
+theme. The **Live** tab starts a model-vs-model match (agent specs like
+`standin`, `openai:gpt-5.5:low`, `openrouter:<slug>:<effort>`) and shows
+Player 1's complete native client — field, battle log, and real controls.
+When it is Player 2's turn to act, Player 2's native controls appear over the
+controls area (the battle screen never changes); a "P1/P2 controls" pill in
+the header tracks whose controls are on screen. Every structured choice a
+model submits is re-enacted by a cursor pressing the actual native buttons —
+moves, targets, switches, Terastallize — inside the real client UI. Each
+side's "model mind" panel shows the structured tactical analysis behind the
+choice (board read, win paths, setup lines, sweep plans, threats, candidate
+choices, risk, and the final choice).
+
+The **Replays** tab lists every recorded match artifact (`/api/replays`) and
+plays it back through the same native stage: Player 1's recorded protocol
+drives the client, Player 2's recorded protocol drives the alternating
+controls, each decision is anchored to the exact request (`rqid`) that
+produced it, presses are re-animated on the real buttons, and the full
+recorded reasoning shows in sync. A transport bar gives play/pause,
+per-decision stepping, 0.5–4x speed, and a decision scrubber. Replays render
+entirely client-side from the `showdown-match-artifact.v1` JSON.
+
+**Theater mode** (the `⛶` button on the stage, or the `t` key; `Esc` exits)
+hides everything except the native client, scaled to fill the screen — the
+whole display is just the official Showdown client with two models invisibly
+at the controls.
+
+The operator console at `/operator.html` keeps the raw observation panels,
+quick-pick legal choices, ladder/tournament/benchmark controls, and the
+artifact lab.
+
+The operator console includes a local model run panel. `Start Models` runs the configured
+agents against the visible `local` battle, so the two official Showdown clients
+show the model-vs-model battle live. The arena header shows the current workflow,
+agent matchup, last selected choices, usage totals, and pause/resume controls for
+the active model run, ladder, or tournament. Use `standin`, `openai:<model>:<effort>`,
+or `openrouter:<model>:<effort>` agent specs. Pause/resume applies before the
+next model decision; stop aborts the run, propagates cancellation to in-flight
+provider fetches, and marks the artifact invalid.
+Provider agents default to `AGENT_MAX_TOKENS=2048` and request strict structured
+JSON with the exact legal choices in the schema, so tactical notes plus the final
+choice stay parseable. Override that environment value if you want a cheaper or
+larger response budget.
+
+## Secrets
+
+Do not put API keys in prompts, source files, artifacts, command output, or docs.
+Use only local environment values:
+
+```sh
+OPENAI_API_KEY=...
+OPENROUTER_API_KEY=...
+```
+
+The provider adapters read only process environment variables. They do not read
+`.env` files or credentials from other projects. Keep shell history and local
+process managers responsible for injecting those values.
+
+## One Battle
+
+Cost-free stand-in agents:
+
+```sh
+MAX_TURNS=40 MOVE_DELAY_MS=200 npm run model:standin
+```
+
+Generic agent runner:
+
+```sh
+AGENT_P1=standin AGENT_P2=standin npm run model:agent
+AGENT_P1=openai:gpt-5.5:low AGENT_P2=standin MAX_TURNS=3 npm run model:agent
+AGENT_P1=openrouter:openai/gpt-4o-mini:low AGENT_P2=standin MAX_TURNS=3 npm run model:agent
+```
+
+Agent spec format:
+
+```text
+standin
+openai:<model>:<reasoning-effort>
+openrouter:<model-slug>:<reasoning-effort>
+```
+
+Examples of reasoning effort are `low`, `medium`, and `high`. Fallback choices
+are disabled by default; set `ALLOW_FALLBACK=1` only for debugging because any
+fallback marks the artifact as `validBenchmark: false`.
+
+Each runner uses its own generated `battleId` by default, so benchmark runs do
+not reset the browser's default `local` battle. Set `BATTLE_ID=...` when you want
+to attach a script to a specific server-side battle session.
+
+## Preflight
+
+Run a tiny paid-call check before a full API battle:
+
+```sh
+npm run openai:preflight
+AGENT=openrouter:openai/gpt-4o-mini:low npm run provider:preflight
+```
+
+## Elo Ladder
+
+Pairwise ladder batch with alternating sides and deterministic seeds:
+
+```sh
+BATTLE_COUNT=10 \
+AGENT_A=standin \
+AGENT_B=openrouter:openai/gpt-4o-mini:low \
+LADDER_DIR=artifacts/ladder-local \
+npm run ladder:batch
+```
+
+This writes one JSON artifact and one `.events.jsonl` stream per battle plus
+`artifacts/ladder-local/summary-latest.json` with wins, invalid benchmark count,
+usage/error totals, side mapping, seeds, and Elo ratings.
+
+Ratings persist across runs in `artifacts/ratings-store.json` by default. Override
+with `RATING_STORE=...`. Rating keys are based on provider, model, and reasoning
+effort, so run labels can change without creating a new model identity.
+
+The browser can also launch a watched ladder batch with the same run code. Use
+the ladder controls next to the model run panel, or call:
+
+```sh
+curl -X POST http://localhost:3107/api/ladder \
+  -H 'content-type: application/json' \
+  -d '{"command":"start","agentA":"standin","agentB":"standin","battleCount":2,"watchLocal":true}'
+
+curl http://localhost:3107/api/ladder
+curl -X POST http://localhost:3107/api/ladder -H 'content-type: application/json' -d '{"command":"pause"}'
+curl -X POST http://localhost:3107/api/ladder -H 'content-type: application/json' -d '{"command":"resume"}'
+curl -X POST http://localhost:3107/api/ladder -H 'content-type: application/json' -d '{"command":"stop"}'
+```
+
+`watchLocal: true` runs each ladder battle through the visible `local` battle so
+the two official clients show the batch live. The CLI and browser ladder both use
+`src/ladder-runner.mjs`, write per-battle JSON/JSONL artifacts, update Elo, and
+write a `showdown-ladder-summary.v1` summary.
+
+## Tournaments
+
+Round-robin tournament batch across multiple agent specs:
+
+```sh
+TOURNAMENT_AGENTS='standin, openai:gpt-5.5:low, openrouter:openai/gpt-5.5:low' \
+BATTLES_PER_PAIR=4 \
+TOURNAMENT_DIR=artifacts/tournament-local \
+npm run tournament:batch
+```
+
+This schedules every unique pair, calls `src/ladder-runner.mjs` for each pair,
+updates the same Elo store, and writes `showdown-tournament-summary.v1` with
+pair summaries, standings, usage totals, final ratings, and links to every
+underlying battle/event artifact.
+
+The browser can also launch a watched tournament:
+
+```sh
+curl -X POST http://localhost:3107/api/tournament \
+  -H 'content-type: application/json' \
+  -d '{"command":"start","agents":"standin, heuristic, standin:alt","battlesPerPair":1,"watchLocal":true}'
+
+curl http://localhost:3107/api/tournament
+curl -X POST http://localhost:3107/api/tournament -H 'content-type: application/json' -d '{"command":"pause"}'
+curl -X POST http://localhost:3107/api/tournament -H 'content-type: application/json' -d '{"command":"resume"}'
+curl -X POST http://localhost:3107/api/tournament -H 'content-type: application/json' -d '{"command":"stop"}'
+```
+
+Only one live run, ladder, tournament, or benchmark runs at a time from the
+browser server, so the visible `local` Showdown clients always represent one
+operator workflow.
+
+## OpenRouter Top-10 Benchmark Suite
+
+The OpenRouter comparison suite builds a cross-provider matrix: selected
+OpenRouter models vs direct OpenAI baselines. It uses the same canonical doubles
+runner and Elo store as ladder batches, but avoids accidentally running every
+OpenRouter model against every other OpenRouter model.
+
+Plan the current suite without paid model calls:
+
+```sh
+npm run benchmark:openrouter
+```
+
+This fetches OpenRouter model metadata from `https://openrouter.ai/api/v1/models`,
+resolves the weekly-usage top-candidate roster, filters to models that advertise
+`response_format` or `structured_outputs`, fills any strict-JSON gaps from the
+latest benchmarkable catalog entries, and writes:
+
+```text
+artifacts/benchmark-suites/<run-id>/suite-plan.json
+```
+
+The default OpenAI baselines are:
+
+```text
+openai:gpt-5.5:low, openai:gpt-5.5:medium
+```
+
+Override the roster or baselines explicitly:
+
+```sh
+OPENROUTER_TOP_MODELS='moonshotai/kimi-k2.6,anthropic/claude-sonnet-4.6,deepseek/deepseek-v4-flash' \
+OPENAI_BASELINES='openai:gpt-5.5:low,openai:gpt-5.5:medium' \
+npm run benchmark:openrouter
+```
+
+Run the paid benchmark only after the plan looks right:
+
+```sh
+RUN_PAID_BENCHMARK=1 \
+BATTLES_PER_PAIR=2 \
+MAX_TURNS=40 \
+MATCH_TIMEOUT_MS=180000 \
+npm run benchmark:openrouter -- run
+```
+
+The paid run writes `showdown-openrouter-benchmark-run.v1` under
+`artifacts/benchmark-suites/<run-id>/summary-latest.json`, with one ladder
+summary per OpenAI-vs-OpenRouter pair, usage/cost metadata, invalid benchmark
+counts, and Elo updates through `BENCHMARK_RATING_STORE` or
+`artifacts/ratings-store.json`.
+
+The browser exposes the same workflow through `/api/benchmark`. Planning is
+always no-paid; starting a run requires an explicit `runPaidBenchmark: true`
+field.
+
+```sh
+curl -X POST http://localhost:3107/api/benchmark \
+  -H 'content-type: application/json' \
+  -d '{"command":"plan","openRouterLimit":10,"openaiBaselines":"openai:gpt-5.5:low, openai:gpt-5.5:medium","battlesPerPair":2,"watchLocal":true}'
+
+curl -X POST http://localhost:3107/api/benchmark \
+  -H 'content-type: application/json' \
+  -d '{"command":"start","runPaidBenchmark":true,"battlesPerPair":2,"watchLocal":true}'
+
+curl http://localhost:3107/api/benchmark
+curl -X POST http://localhost:3107/api/benchmark -H 'content-type: application/json' -d '{"command":"pause"}'
+curl -X POST http://localhost:3107/api/benchmark -H 'content-type: application/json' -d '{"command":"resume"}'
+curl -X POST http://localhost:3107/api/benchmark -H 'content-type: application/json' -d '{"command":"stop"}'
+```
+
+Only one live run, ladder, tournament, or benchmark runs at a time from the
+browser server. With `watchLocal: true`, the visible two-client arena shows the
+current battle in the suite.
+
+## WebSocket API
+
+Connect to `ws://localhost:3107/ws?role=p1`, `p2`, or `spectator`.
+Add `battleId=<id>` to isolate independent battles on the same server.
+
+Client to server:
+
+```json
+{"type":"choose","choice":"move 1 1, move 2 2"}
+{"type":"auto"}
+{"type":"reset","formatid":"gen9randomdoublesbattle","seed":[1,2,3,4]}
+```
+
+HTTP reset also accepts deterministic seeds:
+
+```sh
+curl -X POST http://localhost:3107/api/reset \
+  -H 'content-type: application/json' \
+  -d '{"battleId":"local","formatid":"gen9randomdoublesbattle","seed":[1,2,3,4]}'
+```
+
+List active server-side battles:
+
+```sh
+curl http://localhost:3107/api/battles
+```
+
+Start or control the live browser-attached model runner:
+
+```sh
+curl -X POST http://localhost:3107/api/run \
+  -H 'content-type: application/json' \
+  -d '{"command":"start","battleId":"local","agentP1":"standin","agentP2":"standin","maxTurns":40,"moveDelayMs":200}'
+
+curl http://localhost:3107/api/run
+curl -X POST http://localhost:3107/api/run -H 'content-type: application/json' -d '{"command":"pause"}'
+curl -X POST http://localhost:3107/api/run -H 'content-type: application/json' -d '{"command":"resume"}'
+curl -X POST http://localhost:3107/api/run -H 'content-type: application/json' -d '{"command":"stop"}'
+```
+
+`GET /api/run` returns sanitized live telemetry while a run is active and after
+it finishes: current turn, observation/model-call/action counts, aggregate
+usage, validity/error counters, the last private request summary, the last model
+choice summary, and recent selected choices. It does not include full prompts,
+raw model text, private teams, or secrets; those remain in the durable artifact.
+
+Completed non-`local` battles with no connected clients are pruned from server
+memory; durable records live in the JSON artifacts.
+
+Server to client:
+
+```json
+{"type":"state","role":"p1","state":{...}}
+{"type":"protocol","role":"p1","chunk":"|turn|1\n..."}
+{"type":"end","data":{"winner":"Benchmark P1","turn":12}}
+```
+
+## Benchmark Contract
+
+Models receive `state.extracted`, a `PlayerObservation` with:
+
+- full private own team, including item, ability, nature, moves, tera type, EVs,
+  IVs, current condition, and active stats where available;
+- perspective and opponent role markers for side-specific prompts;
+- exact legal action objects from the current Showdown request;
+- visible opponent active Pokemon and revealed team only;
+- visible history/protocol, field state, side conditions, boosts, volatiles,
+  revealed moves, revealed abilities, item reveal/consume state, and tera reveal;
+- `source.opponentHiddenTeamIncluded: false`.
+
+Models return JSON using `showdown-choice-response.v5`. The analysis fields are
+short tactical notes for auditability, not free-form hidden chain-of-thought:
+
+```json
+{
+  "gameStateSummary": ["board and pressure summary"],
+  "winConditions": ["path to win from known information"],
+  "loseConditions": ["most imminent way to lose and whether it is live this turn"],
+  "setupLines": ["possible setup/support plan"],
+  "sweepPlans": ["damage or cleaning plan"],
+  "safeSwitches": ["safe pivot or why staying in is better"],
+  "opponentLikelyPlan": ["likely opponent action from revealed info"],
+  "biggestThreats": ["immediate threat to cover"],
+  "riskAssessment": ["main risk of the selected plan"],
+  "candidateChoices": ["exact legal choice: upside; risk"],
+  "choice": "move 1 1, move 2 2",
+  "reason": "short final justification"
+}
+```
+
+`choice` must exactly match one `legalActions[]` string. Invalid choices,
+API failures, max-turn caps, and fallbacks are counted in the artifact and make
+`validBenchmark` false.
+
+The prompt uses `showdown-choice-prompt.v6` and includes the exact legal choice
+strings, a compact atomic legal-action catalog, full own-team private data,
+visible opponent-only known data, field/side conditions, the visible battle
+log (single copy: human-readable text in the briefing, structured recent
+events in the observation; raw protocol is not part of the on-screen human
+view and is omitted), action syntax, a compact situation summary, and a
+`battleBriefing` section shaped like a player-facing tactical screen. The
+briefing separates own active/bench, revealed opponent active/team, the current
+active board, available own bench, fainted resources, field state, recent log,
+legal choice semantics, and explicit known-unknown boundaries. The response
+order requires public tactical notes covering board state, win paths, imminent
+lose conditions, setup, sweeping, switches, held-item implications, opponent
+plans, threats, risk, and a concrete comparison of candidate exact legal
+choices before the final exact legal choice. Benchmark
+seeds stay in artifacts and UI status, not in the model-facing prompt payload.
+
+## Artifact Shape
+
+Match artifacts use `showdown-match-artifact.v1` and include:
+
+- format, seed, server URL, agent metadata, max turns, fallback policy;
+- `battleId`, so concurrent or isolated runs can be traced to the server
+  session;
+- artifact-only `teamSnapshots` for both players, including generated set
+  fields and stable team hashes for seed reproducibility audits;
+- per-decision observations and exact legal actions;
+- selected actions and model call records;
+- stable `observationIndex` and `callIndex` links from each selected action back
+  to the exact observation and model call that produced it;
+- prompts, raw model text, response IDs, usage/cost metadata when provided;
+- parsed model tactical analysis fields when provided;
+- normalized `usage` buckets by role, provider, and model;
+- public/private protocol chunks needed for replay/debugging;
+- `eventsPath`/`eventsHref` for the matching `showdown-event-log.v1` JSONL
+  stream;
+- final state summaries, winner, turn, errors, and benchmark validity.
+
+Event streams use `showdown-event-log.v1` with one JSON object per line:
+
+- `match_start` and `match_end` records for seed, format, agents, team hashes,
+  result, benchmark validity, and usage;
+- `hello` and `protocol` records for websocket/protocol replay context;
+- `observation` records with role, turn, request ID, visible active Pokemon,
+  known own-team details, revealed opponent info, exact legal choice summaries,
+  and the hidden-info source marker;
+- `model_call` records with provider/model, selected choice, validity, usage,
+  prompt/response hashes, and bounded response text;
+- `action` records linking the exact submitted choice to `observationIndex` and
+  `callIndex`.
+
+Ladder summaries use `showdown-ladder-summary.v1` and include per-battle seed,
+side mapping, winner, validity, errors, `eventsPath`/`eventsHref`, and ratings
+after each battle.
+
+Tournament summaries use `showdown-tournament-summary.v1` and include agent
+metadata, pair records, per-agent standings, aggregate usage/error totals,
+rating snapshots, and links to each pair's ladder summary.
+
+## Deploy
+
+The server is multi-tenant: every browser gets a persistent session ID
+(localStorage) and its own battle (`s-<session>`), run slot, and replay scope.
+Replays without a session (CLI/legacy runs) show in everyone's public gallery.
+
+```sh
+docker build -t showdown-llm-arena .
+docker run -p 8123:8123 -v arena-artifacts:/app/artifacts showdown-llm-arena
+```
+
+Environment variables:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PORT` | `8123` | HTTP + WebSocket listen port. |
+| `TRUST_PROXY` | off | Set `1` behind a reverse proxy so `x-forwarded-for` drives per-visitor rate limits. Never enable when directly exposed. |
+| `MAX_CONCURRENT_RUNS` | `3` | Global cap on simultaneous live model matches (1–16). |
+| `MAX_LIVE_ARTIFACTS` | `400` | Newest live-run replay artifacts retained on disk; older pairs are pruned at run start. |
+| `OPENROUTER_API_KEY` | unset | Optional house key. Visitors normally bring their own key, which is held in memory for the run only and never written to artifacts. |
+
+Operational notes:
+
+- Terminate TLS at a reverse proxy (Caddy/nginx) and proxy WebSocket upgrades
+  for `/ws` (`Upgrade`/`Connection` headers) to the same port.
+- `GET /healthz` returns `{ok, activeRuns, battles}` for load-balancer checks;
+  the Dockerfile wires it into `HEALTHCHECK`.
+- `SIGTERM`/`SIGINT` abort in-flight runs and close sockets gracefully.
+- Rate limits: run starts 6/min/IP, key validation 10/min/IP.
+- Mount `/app/artifacts` as a volume if replays should survive redeploys.
+
+## Verification
+
+```sh
+npm run verify
+npm run audit:production
+```
+
+`npm run verify` is the no-paid production gate. It runs the smoke contracts,
+API-control smokes, a standalone stand-in ladder batch, and a key-pattern secret
+scan, then writes `artifacts/verification/verify-latest.json`. It does not call
+OpenAI or OpenRouter unless explicitly requested.
+
+`npm run audit:production` reads the latest verification report plus the current
+match, provider, ladder, tournament, UI screenshot, source, package, and README
+evidence, then writes `artifacts/verification/production-audit-latest.json`.
+The audit reports a requirement-by-requirement matrix. It can pass the no-paid
+production gate while still warning that real paid OpenAI/OpenRouter preflight
+remains external until `RUN_PAID_PREFLIGHT=1 npm run verify` has run with both
+keys in the process environment.
+
+Optional paid preflight, only when API keys are already in the process
+environment:
+
+```sh
+RUN_PAID_PREFLIGHT=1 npm run verify
+```
+
+The underlying no-paid checks are:
+
+```sh
+npm run smoke
+npm run smoke:extractor
+npm run smoke:control
+npm run smoke:ws
+npm run smoke:choices
+npm run smoke:legal-canonical
+npm run smoke:hidden
+npm run smoke:runner
+npm run smoke:isolation
+npm run smoke:usage
+npm run smoke:events
+npm run smoke:repro
+npm run smoke:prompt
+npm run smoke:live
+npm run smoke:frontend
+npm run smoke:localhost
+npm run smoke:provider-config
+npm run smoke:provider-artifact
+npm run smoke:abort
+npm run smoke:redaction
+npm run smoke:ladder-ui
+npm run smoke:tournament
+npm run smoke:tournament-api
+npm run smoke:benchmark-suite
+npm run smoke:benchmark-api
+```
+
+`smoke:choices` covers doubles target syntax, forced switches, trapped Pokemon,
+duplicate switch prevention, faint/pass handling, and single-Tera composition.
+`smoke:legal-canonical` submits representative choices generated from real
+Showdown requests across several deterministic seeds, including targeted moves,
+switching, Terastallize, and an actual force-switch request, and fails if the
+vendored Showdown engine rejects any generated command. Set
+`LEGAL_CANONICAL_SEEDS='1,2,3,4;11,22,33,44'` to override the seed set.
+`smoke:hidden` asserts hidden opponent species do not leak through
+`PlayerObservation`. `smoke:runner` proves selected actions are exact legal
+choices and are linked to their source observation/model call in the artifact.
+`smoke:isolation` proves two battles with different seeds can run independently
+on the same local server. `smoke:usage` proves OpenAI/OpenRouter-style usage
+objects normalize into stable token/cost summaries. `smoke:events` proves the
+JSONL stream is ordered, parseable, and carries legal choice and hidden-info
+markers without duplicating full prompts. `smoke:repro` proves same-seed battles
+produce identical full team snapshots and team hashes in artifacts. `smoke:prompt`
+proves the model prompt contains the screen-equivalent context, exact legal
+choices, hidden-info marker, and required tactical response fields without
+exposing the benchmark seed. `smoke:live` proves the browser-attached `/api/run`
+path can complete a stand-in model battle on the visible `local` battle and write
+match/event artifacts. `smoke:frontend` uses headless Chrome against a temporary
+local server to write `artifacts/frontend-screenshot-smoke.png` and prove the
+rendered browser UI contains both player observations, the official doubles
+format, capped quick-pick legal choices, model controls, ladder/tournament
+controls, and the artifact lab. `smoke:localhost` uses headless Chrome against a
+currently running `http://localhost:3107` server and writes
+`artifacts/localhost-3107-smoke.png` for live dashboard verification.
+`smoke:provider-config` proves provider keys are env-only
+and that fake OpenAI/OpenRouter calls do not leak keys or seeds into prompts.
+`smoke:provider-artifact` runs fake OpenAI and OpenRouter adapters through the
+real websocket match runner and proves provider artifacts include prompts, raw
+responses, usage metadata, schema markers, legal choices, and prompt/response
+event refs without paid calls or key/seed leakage.
+`smoke:abort` proves OpenAI and OpenRouter adapter fetches receive the runner
+AbortSignal without using the network. `smoke:redaction` proves key-shaped agent
+metadata is scrubbed from failed-run artifacts and Elo-facing identifiers.
+`smoke:ladder-ui` proves `/api/ladder`
+can run a watched browser ladder batch, write a summary, and update the
+persistent rating store.
+`smoke:tournament` proves the reusable round-robin scheduler writes pair
+summaries and ratings; `smoke:tournament-api` proves `/api/tournament` can run
+the same scheduler through the browser server controls. `smoke:benchmark-suite`
+proves the OpenRouter-vs-OpenAI suite planner keeps canonical random doubles and
+strict-output model filtering. `smoke:benchmark-api` proves `/api/benchmark`
+creates a no-paid browser plan artifact and refuses an unconfirmed paid run.
+
+Use the browser at `http://localhost:3107` to watch the two official Showdown
+clients and inspect grouped legal actions, observations, history, and artifacts.

@@ -1,0 +1,8 @@
+node_modules
+vendor/pokemon-showdown/node_modules
+vendor/pokemon-showdown/dist
+vendor/pokemon-showdown-client/node_modules
+artifacts
+.git
+*.log
+.DS_Store

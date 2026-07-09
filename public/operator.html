@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Showdown Model Arena — Operator Console</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <main class="duel-shell">
+      <header class="duel-topbar">
+        <div>
+          <h1>Showdown Model Arena</h1>
+          <p id="status">Connecting...</p>
+          <p class="back-link"><a href="/">&larr; Back to the arena</a></p>
+        </div>
+        <div class="duel-actions">
+          <div class="segmented" aria-label="Client display mode">
+            <button data-display-mode="fit" aria-pressed="true">Fit</button>
+            <button data-display-mode="exact" aria-pressed="false">Exact</button>
+          </div>
+          <label class="toggle"><input id="auto-loop-p1" type="checkbox"> Auto P1</label>
+          <label class="toggle"><input id="auto-loop-p2" type="checkbox"> Auto P2</label>
+          <button id="auto-p1">Step P1</button>
+          <button id="auto-p2">Step P2</button>
+          <button id="auto-both">Step Both</button>
+          <input id="seed" type="text" placeholder="seed: 1,2,3,4" aria-label="Battle seed">
+          <button id="reset">New Battle</button>
+        </div>
+      </header>
+
+      <section class="run-strip" aria-label="Battle run status">
+        <div><span>Turn</span><strong id="turn">-</strong></div>
+        <div><span>Format</span><strong id="format">-</strong></div>
+        <div><span>Seed</span><strong id="run-seed">-</strong></div>
+        <div><span>P1</span><strong id="p1-status">connecting</strong></div>
+        <div><span>P2</span><strong id="p2-status">connecting</strong></div>
+        <div><span>Winner</span><strong id="winner">-</strong></div>
+      </section>
+
+      <section class="arena-stage" aria-label="Live model arena">
+        <section class="broadcast-screen" aria-label="Broadcast battle view">
+          <div class="broadcast-scorebar">
+            <div>
+              <span id="broadcast-live-label">Model Battle</span>
+              <strong id="broadcast-headline">Waiting for battle state</strong>
+              <small id="broadcast-subtitle">-</small>
+              <div id="broadcast-ticker" class="broadcast-ticker">-</div>
+            </div>
+            <div class="broadcast-view-toggle segmented" aria-label="Broadcast viewer">
+              <button data-broadcast-view="p1" aria-pressed="true">P1 View</button>
+              <button data-broadcast-view="p2" aria-pressed="false">P2 View</button>
+            </div>
+          </div>
+
+          <section class="client-grid broadcast-grid" aria-label="Local Pokemon Showdown battle viewers">
+            <article class="client-window" data-role="p1">
+              <div class="window-title">Player 1 View</div>
+              <div class="client-viewport">
+                <iframe id="p1-frame" title="Player 1 Showdown client" src="/showdown-frame.html?role=p1"></iframe>
+              </div>
+            </article>
+            <article class="client-window" data-role="p2">
+              <div class="window-title">Player 2 View</div>
+              <div class="client-viewport">
+                <iframe id="p2-frame" title="Player 2 Showdown client" src="/showdown-frame.html?role=p2"></iframe>
+              </div>
+            </article>
+          </section>
+        </section>
+
+        <aside class="broadcast-rail" aria-label="Model decision broadcast">
+          <section class="arena-telemetry" aria-label="Arena model telemetry">
+            <div><span>Workflow</span><strong id="arena-workflow">manual</strong></div>
+            <div><span>Agents</span><strong id="arena-agents">standin vs standin</strong></div>
+            <div><span>Last Choices</span><strong id="arena-last-choices">-</strong></div>
+            <div><span>Usage</span><strong id="arena-usage">-</strong></div>
+            <div class="arena-controls">
+              <button id="arena-pause">Pause</button>
+              <button id="arena-resume">Resume</button>
+            </div>
+          </section>
+
+          <section class="broadcast-cards" aria-label="Current model decisions">
+            <article id="broadcast-card-p1" class="broadcast-card"></article>
+            <article id="broadcast-card-p2" class="broadcast-card"></article>
+          </section>
+
+          <section class="broadcast-feed-section" aria-label="Turn decision feed">
+            <div class="broadcast-section-title">
+              <h2>Model Decisions</h2>
+              <span id="broadcast-feed-meta">-</span>
+            </div>
+            <div id="broadcast-feed" class="broadcast-feed"></div>
+          </section>
+        </aside>
+      </section>
+      </section>
+
+      <section class="operator-grid" aria-label="Model observation and controls">
+        <article class="observation-panel" id="panel-p1">
+          <h2>P1 Observation</h2>
+          <div class="panel-body"></div>
+        </article>
+        <article class="observation-panel" id="panel-p2">
+          <h2>P2 Observation</h2>
+          <div class="panel-body"></div>
+        </article>
+        <article class="observation-panel">
+          <h2>Run Artifacts</h2>
+          <section class="model-run-panel" aria-label="Model run controls">
+            <div class="model-run-grid">
+              <label>P1 Agent<input id="agent-p1" type="text" value="standin" aria-label="P1 agent"></label>
+              <label>P2 Agent<input id="agent-p2" type="text" value="standin" aria-label="P2 agent"></label>
+              <label>Max Turns<input id="run-max-turns" type="text" value="40" aria-label="Max turns"></label>
+              <label>Delay ms<input id="run-delay" type="text" value="200" aria-label="Move delay milliseconds"></label>
+            </div>
+            <div class="model-run-actions">
+              <button id="run-start">Start Models</button>
+              <button id="run-pause">Pause</button>
+              <button id="run-resume">Resume</button>
+              <button id="run-stop">Stop</button>
+            </div>
+            <div id="model-run-status" class="model-run-status">No active model run.</div>
+          </section>
+          <section class="model-run-panel" aria-label="Ladder controls">
+            <div class="model-run-grid">
+              <label>Ladder Battles<input id="ladder-count" type="text" value="2" aria-label="Ladder battle count"></label>
+              <label>Watch<input id="ladder-watch" type="checkbox" checked aria-label="Watch ladder battles in local clients"></label>
+            </div>
+            <div class="model-run-actions">
+              <button id="ladder-start">Start Ladder</button>
+              <button id="ladder-pause">Pause</button>
+              <button id="ladder-resume">Resume</button>
+              <button id="ladder-stop">Stop</button>
+            </div>
+            <div id="ladder-status" class="model-run-status">No active ladder.</div>
+          </section>
+          <section class="model-run-panel" aria-label="Tournament controls">
+            <div class="model-run-grid">
+              <label class="wide-field">Tournament Agents<input id="tournament-agents" type="text" value="standin, heuristic, standin:alt" aria-label="Tournament agents"></label>
+              <label>Battles / Pair<input id="tournament-battles" type="text" value="1" aria-label="Tournament battles per pair"></label>
+              <label>Watch<input id="tournament-watch" type="checkbox" checked aria-label="Watch tournament battles in local clients"></label>
+            </div>
+            <div class="model-run-actions">
+              <button id="tournament-start">Start Tournament</button>
+              <button id="tournament-pause">Pause</button>
+              <button id="tournament-resume">Resume</button>
+              <button id="tournament-stop">Stop</button>
+            </div>
+            <div id="tournament-status" class="model-run-status">No active tournament.</div>
+          </section>
+          <section class="model-run-panel" aria-label="OpenRouter benchmark controls">
+            <div class="model-run-grid">
+              <label>OpenRouter Models<input id="benchmark-openrouter-limit" type="text" value="10" aria-label="OpenRouter model count"></label>
+              <label>Battles / Pair<input id="benchmark-battles" type="text" value="2" aria-label="Benchmark battles per pair"></label>
+              <label class="wide-field">OpenAI Baselines<input id="benchmark-openai-baselines" type="text" value="openai:gpt-5.5:low, openai:gpt-5.5:medium" aria-label="OpenAI baseline agents"></label>
+              <label>Watch<input id="benchmark-watch" type="checkbox" checked aria-label="Watch benchmark battles in local clients"></label>
+              <label>Paid<input id="benchmark-paid" type="checkbox" aria-label="Allow paid benchmark calls"></label>
+            </div>
+            <div class="model-run-actions">
+              <button id="benchmark-plan">Plan Top-10</button>
+              <button id="benchmark-start">Start Benchmark</button>
+              <button id="benchmark-pause">Pause</button>
+              <button id="benchmark-resume">Resume</button>
+              <button id="benchmark-stop">Stop</button>
+            </div>
+            <div id="benchmark-status" class="model-run-status">No active benchmark.</div>
+          </section>
+          <div class="model-path">
+            <span>Action Contract</span>
+            <strong><code>PlayerObservation</code> -> exact legal choice -> websocket choose</strong>
+          </div>
+          <div id="artifacts" class="artifact-list"></div>
+        </article>
+      </section>
+
+      <section class="lab-panel" aria-label="Benchmark artifact lab">
+        <div class="lab-header">
+          <h2>Artifact Lab</h2>
+          <div class="lab-controls">
+            <select id="artifact-select" aria-label="Artifact"></select>
+            <button id="artifact-reload">Reload</button>
+          </div>
+        </div>
+        <div id="artifact-summary" class="lab-summary"></div>
+        <div class="lab-grid">
+          <article>
+            <h3>Timeline</h3>
+            <div id="artifact-timeline" class="timeline-list"></div>
+          </article>
+          <article>
+            <h3>Prompt Trace</h3>
+            <div id="artifact-trace" class="trace-list"></div>
+          </article>
+        </div>
+      </section>
+
+      <details class="raw-panel">
+        <summary>Raw PlayerObservation</summary>
+        <pre id="state"></pre>
+      </details>
+    </main>
+    <script src="/dual.js" type="module"></script>
+  </body>
+</html>

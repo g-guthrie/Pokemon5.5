@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Run outputs: replays, event streams, verification reports, screenshots
+artifacts/
+
+# Vendored Showdown checkouts: independent git repos, restored by cloning
+# upstream and running `npm run setup:showdown` (see README)
+vendor/
+
+# Local tooling state
+.claude/settings.local.json
+.DS_Store
+*.log
+.claude/scheduled_tasks.lock

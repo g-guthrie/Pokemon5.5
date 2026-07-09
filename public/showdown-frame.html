@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width">
+    <title>Showdown Battle Frame</title>
+    <link rel="stylesheet" href="/ps/style/battle.css">
+    <link rel="stylesheet" href="/ps/style/client.css">
+    <link rel="stylesheet" href="/ps/style/sim-types.css">
+    <link rel="stylesheet" href="/ps/style/utilichart.css">
+    <link rel="stylesheet" href="/ps/style/font-awesome.css">
+    <link rel="stylesheet" href="/showdown-frame.css">
+    <script>
+      window.Config = {
+        testclient: true,
+        server: {id: 'localbenchmark', host: location.hostname, port: Number(location.port) || 80, registered: true},
+        defaultserver: {id: 'localbenchmark', host: location.hostname, port: Number(location.port) || 80, registered: true},
+        routes: {
+          root: 'pokemonshowdown.com',
+          client: location.host,
+          dex: 'dex.pokemonshowdown.com',
+          replays: 'replay.pokemonshowdown.com',
+          users: 'pokemonshowdown.com/users'
+        },
+        bannedHosts: [],
+        whitelist: [],
+        customcolors: {}
+      };
+    </script>
+  </head>
+  <body>
+    <div id="battle-root" class="ps-room"></div>
+
+    <script src="/ps/js/lib/jquery-2.2.4.min.js"></script>
+    <script src="/ps/js/lib/jquery-cookie.js"></script>
+    <script src="/ps/js/lib/autoresize.jquery.min.js"></script>
+    <script src="/ps/js/lib/html-css-sanitizer-minified.js"></script>
+    <script src="/ps/js/lib/lodash.core.js"></script>
+    <script src="/ps/js/lib/backbone.js"></script>
+    <script src="/ps/js/lib/d3.v3.min.js"></script>
+    <script>window.exports = window;</script>
+    <script src="/data/graphics.js"></script>
+    <script src="/data/text.js"></script>
+    <script src="/data/pokedex-mini.js"></script>
+    <script src="/data/pokedex-mini-bw.js"></script>
+    <script src="/data/typechart.js"></script>
+    <script src="/data/pokedex.js"></script>
+    <script src="/ps/js/battle-dex-data.js"></script>
+    <script src="/ps/js/battle-dex.js"></script>
+    <script src="/ps/js/battle-teams.js"></script>
+    <script src="/ps/js/battle-text-parser.js"></script>
+    <script src="/ps/src/battle-log-misc.js"></script>
+    <script src="/ps/js/battle-log.js"></script>
+    <script src="/ps/js/battle-sound.js"></script>
+    <script src="/ps/js/battle-animations.js"></script>
+    <script src="/ps/js/battle-animations-moves.js"></script>
+    <script src="/ps/js/battle-tooltips.js"></script>
+    <script src="/ps/js/battle.js"></script>
+    <script src="/ps/js/client.js"></script>
+    <script src="/ps/js/client-ladder.js"></script>
+    <script src="/ps/js/client-chat.js"></script>
+    <script src="/ps/js/client-battle.js"></script>
+    <script src="/showdown-adapter.js"></script>
+  </body>
+</html>

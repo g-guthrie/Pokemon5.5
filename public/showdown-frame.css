@@ -1,0 +1,103 @@
+html,
+body {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: #eef2f5;
+}
+
+#battle-root {
+  position: relative;
+  display: block !important;
+  width: auto !important;
+  min-height: 740px;
+}
+
+#battle-root .battle {
+  transform-origin: top left;
+}
+
+/* Native dark theme: the client scopes dark rules under html.dark; give the
+   frame body a matching backdrop so no light gaps leak through. */
+html.dark,
+html.dark body {
+  background: #181a1f;
+}
+
+/* Hide chrome that makes no sense for a render-only benchmark viewer: chat
+   input, userlist, chat toggle, battle options, the timer button, and the
+   end-of-battle upload/share/menu buttons (they target pokemonshowdown.com). */
+.battle-log-add,
+.battle-userlist,
+.battle-chat-toggle,
+button[name="openBattleOptions"],
+button[name="openTimer"],
+.timerbutton,
+button[name="saveReplay"],
+.replayDownloadButton,
+button[name="closeAndMainMenu"],
+button[name="closeAndRematch"] {
+  display: none !important;
+}
+
+/* Controls-only frames render just the real native control bar (move/switch
+   buttons). The Showdown client renders its room into a .ps-room appended to
+   <body> (the #battle-root div is left empty), with the field and controls
+   absolutely positioned. So we collapse the empty #battle-root, move the
+   field/log off-screen (keeping their natural box so the client's layout math
+   still has dimensions), and promote .battle-controls into normal flow. */
+body[data-view-mode="controls"] {
+  background: #eef2f5;
+  overflow: hidden;
+}
+
+/* Match the dark client's controls background so the alternating overlay is
+   indistinguishable from the base client's own controls area. */
+html.dark body[data-view-mode="controls"] {
+  background: #444444;
+}
+
+body[data-view-mode="controls"] #battle-root {
+  display: none !important;
+}
+
+body[data-view-mode="controls"] .ps-room {
+  position: static !important;
+  inset: auto !important;
+  width: 100% !important;
+  height: auto !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+}
+
+body[data-view-mode="controls"] .ps-room .battle,
+body[data-view-mode="controls"] .ps-room .foehint,
+body[data-view-mode="controls"] .ps-room .battle-log,
+body[data-view-mode="controls"] .ps-room .battle-log-add,
+body[data-view-mode="controls"] .ps-room .battle-userlist,
+body[data-view-mode="controls"] .ps-room .battle-chat-toggle {
+  position: absolute !important;
+  left: -99999px !important;
+  top: 0 !important;
+  pointer-events: none !important;
+}
+
+body[data-view-mode="controls"] .ps-room .battle-controls,
+body[data-view-mode="controls"] .ps-room .battle-controls .controls {
+  position: static !important;
+  left: auto !important;
+  top: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: 100% !important;
+  min-height: 0 !important;
+  /* The control menus float/absolutely-position; flow-root makes these boxes
+     contain them so they take real vertical space at the top of the frame. */
+  display: flow-root !important;
+}
+
+body[data-view-mode="controls"] .ps-room .battle-controls {
+  padding-bottom: 8px;
+}

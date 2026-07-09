@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Showdown LLM Arena</title>
+    <meta name="description" content="Watch two language models battle in the native Pokemon Showdown client.">
+    <meta property="og:title" content="Showdown LLM Arena">
+    <meta property="og:description" content="Pick two models. Watch them battle in the native Pokemon Showdown client — every press animated, every decision explained.">
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="/og.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:image" content="/og.png">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Crect width=%27100%27 height=%27100%27 rx=%2722%27 fill=%27%23ffcb05%27/%3E%3Ctext x=%2750%27 y=%2772%27 font-size=%2762%27 text-anchor=%27middle%27%3E%E2%9A%A1%3C/text%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/arena.css">
+  </head>
+  <body>
+    <main>
+      <header class="topbar">
+        <div class="brand"><span class="bolt">&#9889;</span>Showdown <span class="grad">LLM Arena</span></div>
+        <nav class="tabs" id="arena-tabs" aria-label="Arena mode">
+          <button data-tab="live" aria-pressed="true">Live</button>
+          <button data-tab="replay" aria-pressed="false">Replays</button>
+        </nav>
+        <div class="spacer"></div>
+      </header>
+
+      <!-- ============================ LIVE ============================ -->
+      <section id="live-view" aria-label="Live model match">
+        <section class="matchup" id="live-matchup" aria-label="Matchup">
+          <div class="model-plate p1" id="live-plate-p1">
+            <span class="crown">&#128081;</span>
+            <span class="provider">&mdash;</span>
+            <strong class="model-name">Player 1</strong>
+            <span class="effort"></span>
+          </div>
+          <div class="versus">
+            <div class="turn-ring"><strong id="live-turn">&ndash;</strong><label>turn</label></div>
+            <div class="status-pill" id="live-status" data-status="idle">idle</div>
+            <div class="run-controls" id="live-run-controls">
+              <button class="icon-btn" id="live-pause" title="Pause">&#10074;&#10074;</button>
+              <button class="icon-btn" id="live-resume" title="Resume">&#9654;</button>
+              <button class="icon-btn" id="live-stop" title="Stop">&#9632;</button>
+            </div>
+          </div>
+          <div class="model-plate p2" id="live-plate-p2">
+            <span class="crown">&#128081;</span>
+            <span class="provider">&mdash;</span>
+            <strong class="model-name">Player 2</strong>
+            <span class="effort"></span>
+          </div>
+        </section>
+
+        <div class="winner-banner hidden" id="live-banner"></div>
+
+        <section class="setup-card" id="live-setup-card" aria-label="Match setup">
+          <h2 class="setup-title">Two AIs. One battle.</h2>
+          <p class="setup-sub">Pick two models. Watch them battle in the native client &mdash; every press animated, every decision explained.</p>
+
+          <ol class="pipeline">
+            <li class="step" id="step-key">
+              <header class="step-head">
+                <span class="step-ball">1</span>
+                <h3>Power up with your OpenRouter key</h3>
+              </header>
+              <div class="key-panel" id="key-panel">
+                <div class="key-entry" id="key-entry">
+                  <input id="key-input" type="password" placeholder="sk-or-v1-&hellip; &mdash; your OpenRouter API key" spellcheck="false" autocomplete="off" aria-label="OpenRouter API key">
+                  <button class="ghost key-enter" id="key-enter">Enter</button>
+                </div>
+                <div class="key-status hidden" id="key-status" aria-live="polite"></div>
+                <p class="key-note">Stored only in this browser. Sent only to OpenRouter. Your key powers the models &mdash; the arena bills nothing itself.</p>
+              </div>
+            </li>
+
+            <li class="step locked" id="step-models">
+              <header class="step-head">
+                <span class="step-ball">2</span>
+                <h3>Choose the players</h3>
+              </header>
+              <div class="setup-grid">
+                <label class="grow">Player 1 agent
+                  <input id="setup-p1" type="text" value="standin" spellcheck="false" list="model-options" autocomplete="off" placeholder="search any model&hellip;">
+                  <div class="preset-row" data-target="setup-p1"></div>
+                </label>
+                <span class="setup-vs">vs</span>
+                <label class="grow">Player 2 agent
+                  <input id="setup-p2" type="text" value="standin" spellcheck="false" list="model-options" autocomplete="off" placeholder="search any model&hellip;">
+                  <div class="preset-row" data-target="setup-p2"></div>
+                </label>
+              </div>
+            </li>
+
+            <li class="step locked" id="step-start">
+              <header class="step-head">
+                <span class="step-ball">3</span>
+                <h3>Battle!</h3>
+              </header>
+              <button class="primary setup-start" id="live-start">Start match</button>
+              <details class="setup-advanced">
+                <summary>Advanced</summary>
+                <label class="small">Pace ms
+                  <input id="setup-delay" type="text" value="1400">
+                </label>
+              </details>
+              <div class="dock-note" id="live-note"></div>
+            </li>
+          </ol>
+
+          <div class="demo-strip">
+            <span class="demo-lead">No key yet?</span>
+            <button class="demo-btn" id="live-demo">&#9654; Watch a demo battle</button>
+            <span class="demo-note">free &middot; two built-in players &middot; starts instantly</span>
+          </div>
+        </section>
+
+        <section class="stage-single" id="live-stage" aria-label="Battle stage">
+          <article class="client-card battle-screen">
+            <header>
+              <i class="dot neutral"></i>
+              <span class="who">Battle</span>
+              <span class="role-tag">NATIVE CLIENT</span>
+              <span class="controls-owner" id="live-controls-owner" data-side="p1">P1 controls</span>
+              <button class="theater-btn" data-sound-toggle title="Battle sound (m)">&#128263;</button>
+              <button class="theater-btn" data-theater-toggle title="Theater mode — just the client (t)">&#x26F6;</button>
+            </header>
+            <div class="viewport native-stage" id="live-viewport-battle">
+              <iframe id="live-frame-battle" title="Battle view (Player 1 native client)" data-frame-src="/showdown-frame.html?role=p1&theme=dark&drive=parent" allow="autoplay"></iframe>
+              <div class="controls-overlay hidden" id="live-overlay">
+                <iframe id="live-overlay-frame" title="Player 2 native controls" data-frame-src="/showdown-frame.html?role=p2&controls=1&theme=dark&drive=parent"></iframe>
+              </div>
+            </div>
+          </article>
+
+          <section class="pads" aria-label="Model reasoning">
+            <article class="client-card pad-card" data-side="p1">
+              <header>
+                <i class="dot"></i>
+                <span class="who" id="live-who-p1">Player 1</span>
+                <span class="role-tag">P1</span>
+                <span class="action-chip" id="live-chip-p1">waiting</span>
+              </header>
+              <section class="mind" id="live-mind-p1" aria-label="Player 1 model reasoning"></section>
+            </article>
+            <article class="client-card pad-card" data-side="p2">
+              <header>
+                <i class="dot"></i>
+                <span class="who" id="live-who-p2">Player 2</span>
+                <span class="role-tag">P2</span>
+                <span class="action-chip" id="live-chip-p2">waiting</span>
+              </header>
+              <section class="mind" id="live-mind-p2" aria-label="Player 2 model reasoning"></section>
+            </article>
+          </section>
+        </section>
+
+        <footer class="ticker" id="live-ticker" aria-label="Recent decisions"></footer>
+      </section>
+
+      <!-- ============================ REPLAY ============================ -->
+      <section id="replay-view" class="hidden" aria-label="Replay theater">
+        <section class="replay-bar">
+          <h2>Recorded matches</h2>
+          <button class="ghost" id="replay-refresh">Refresh</button>
+        </section>
+        <section class="replay-grid" id="replay-grid" aria-label="Pick a recorded match"></section>
+
+        <section class="matchup" aria-label="Replay matchup">
+          <div class="model-plate p1" id="replay-plate-p1">
+            <span class="crown">&#128081;</span>
+            <span class="provider">&mdash;</span>
+            <strong class="model-name">Player 1</strong>
+            <span class="effort"></span>
+          </div>
+          <div class="versus">
+            <div class="turn-ring"><strong id="replay-turn">&ndash;</strong><label>turn</label></div>
+            <div class="status-pill" id="replay-status" data-status="idle">no replay</div>
+          </div>
+          <div class="model-plate p2" id="replay-plate-p2">
+            <span class="crown">&#128081;</span>
+            <span class="provider">&mdash;</span>
+            <strong class="model-name">Player 2</strong>
+            <span class="effort"></span>
+          </div>
+        </section>
+
+        <div class="winner-banner hidden" id="replay-banner"></div>
+
+        <section class="transport" aria-label="Replay transport">
+          <button class="t-btn" id="rp-prev" title="Previous decision">&#9198;</button>
+          <button class="t-btn play" id="rp-play" title="Play / pause">&#9654;</button>
+          <button class="t-btn" id="rp-next" title="Next decision">&#9197;</button>
+          <div class="speed-group" aria-label="Playback speed">
+            <button data-speed="0.5">0.5&times;</button>
+            <button data-speed="1" aria-pressed="true">1&times;</button>
+            <button data-speed="2">2&times;</button>
+            <button data-speed="4">4&times;</button>
+          </div>
+          <div class="scrub" id="rp-scrub" tabindex="0" role="slider" aria-label="Decision scrubber" aria-valuemin="0" aria-valuenow="0">
+            <div class="scrub-track"></div>
+            <div class="scrub-fill" id="rp-scrub-fill"></div>
+            <div class="scrub-dots" id="rp-scrub-dots"></div>
+          </div>
+          <span class="t-pos" id="rp-pos">no replay loaded</span>
+        </section>
+
+        <section class="stage-single" id="replay-stage" aria-label="Replay stage">
+          <article class="client-card battle-screen">
+            <header>
+              <i class="dot neutral"></i>
+              <span class="who">Battle</span>
+              <span class="role-tag">NATIVE REPLAY</span>
+              <span class="controls-owner" id="replay-controls-owner" data-side="p1">P1 controls</span>
+              <button class="theater-btn" data-sound-toggle title="Battle sound (m)">&#128263;</button>
+              <button class="theater-btn" data-theater-toggle title="Theater mode — just the client (t)">&#x26F6;</button>
+            </header>
+            <div class="viewport native-stage" id="replay-viewport-battle">
+              <div class="stage-placeholder" id="replay-placeholder">Pick a recorded match above &mdash; it replays here, presses and all.</div>
+              <div class="controls-overlay hidden" id="replay-overlay"></div>
+            </div>
+          </article>
+
+          <section class="pads" aria-label="Recorded reasoning">
+            <article class="client-card pad-card" data-side="p1">
+              <header>
+                <i class="dot"></i>
+                <span class="who" id="replay-who-p1">Player 1</span>
+                <span class="role-tag">P1</span>
+                <span class="action-chip" id="replay-chip-p1"></span>
+              </header>
+              <section class="mind" id="replay-mind-p1" aria-label="Player 1 recorded reasoning"></section>
+            </article>
+            <article class="client-card pad-card" data-side="p2">
+              <header>
+                <i class="dot"></i>
+                <span class="who" id="replay-who-p2">Player 2</span>
+                <span class="role-tag">P2</span>
+                <span class="action-chip" id="replay-chip-p2"></span>
+              </header>
+              <section class="mind" id="replay-mind-p2" aria-label="Player 2 recorded reasoning"></section>
+            </article>
+          </section>
+        </section>
+      </section>
+      <footer class="site-footer">
+        <span>Model-vs-model benchmark &middot; native Pok&eacute;mon Showdown client &middot; <span class="contract-tag">prompt v6 &middot; response v5</span></span>
+        <span class="footer-hints"><kbd>t</kbd> theater &middot; <kbd>m</kbd> sound &middot; <kbd>esc</kbd> exit</span>
+        <a class="operator-link" href="/operator.html">Operator console &rarr;</a>
+      </footer>
+      <p class="site-disclaimer">Fan-made research project. Not affiliated with, endorsed by, or sponsored by Nintendo, Game Freak, or The Pok&eacute;mon Company. Battle simulation by the open-source Pok&eacute;mon Showdown project.</p>
+    </main>
+    <datalist id="model-options"></datalist>
+    <button id="theater-sound" class="hidden" data-sound-toggle title="Battle sound (m)">&#128263;</button>
+    <button id="theater-exit" class="hidden" title="Open the full dashboard (Esc)">&#x229E; Dashboard</button>
+    <script src="/arena.js" type="module"></script>
+  </body>
+</html>
