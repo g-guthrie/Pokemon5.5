@@ -48,10 +48,12 @@ export function normalizeAgentConfig(config = {}) {
     reasoningEffort,
     name: sanitizeText(config.name || `${provider}:${publicModel}${reasoningEffort ? `:${reasoningEffort}` : ''}`),
     ratingKey: sanitizeText(config.ratingKey || `${provider}:${publicModel}:${reasoningEffort || 'none'}`),
-    // Generous by default: providers bill actual usage, not this ceiling.
-    // (OpenRouter pre-reserves maxTokens x price against the account balance
-    // per request, so near-empty accounts may need AGENT_MAX_TOKENS lowered.)
-    maxTokens: Number(config.maxTokens || process.env.AGENT_MAX_TOKENS || 4096),
+    // Very generous by default: the tactical analysis is the product, so the
+    // answer must never be squeezed. Providers bill actual usage, not this
+    // ceiling. (OpenRouter pre-reserves maxTokens x price against the account
+    // balance per request, so near-empty accounts may need AGENT_MAX_TOKENS
+    // lowered.)
+    maxTokens: Number(config.maxTokens || process.env.AGENT_MAX_TOKENS || 16384),
     temperature: Number(config.temperature ?? process.env.AGENT_TEMPERATURE ?? 0.2),
     capturePrompts: config.capturePrompts ?? process.env.CAPTURE_PROMPTS !== '0',
     // Per-run key (e.g. a website visitor's own OpenRouter key). Held in
@@ -529,7 +531,7 @@ function resultFromModelText({
     fallback: Boolean(fallback),
     reason: sanitizeText(parsed.reason || parsed.finalReason || ''),
     analysis,
-    rawText: sanitizeText(text).slice(0, 2000),
+    rawText: sanitizeText(text).slice(0, 8000),
     usage,
     openrouterMetadata,
     prompt,

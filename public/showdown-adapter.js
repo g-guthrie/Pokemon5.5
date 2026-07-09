@@ -382,7 +382,8 @@
   }
 
   function accentColor() {
-    return role === 'p1' ? '#22d3ee' : '#f472b6';
+    // Player 1 is Red, Player 2 is Blue — brightened for the dark client.
+    return role === 'p1' ? '#ff6b4a' : '#5fa8e8';
   }
 
   function ensureCursor() {

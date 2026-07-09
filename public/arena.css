@@ -23,7 +23,7 @@
   --green: #1f9d63;
   --red: #d63b3b;
   --bezel: #1c2b4a;
-  --screen-dark: #14181f;
+  --screen-dark: #101a30;
   --radius: 14px;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --mono: "SF Mono", ui-monospace, "Cascadia Code", Menlo, monospace;
@@ -1173,29 +1173,173 @@ body.theater .battle-screen .viewport {
   to { background-position: -200% 0; }
 }
 
+/* Known-context board: what this player can actually see. */
+
+.mind-board {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1.5px solid var(--line-soft);
+  border-radius: 14px;
+  background: var(--card-strong);
+  padding: 10px 12px;
+}
+
+.board-row .board-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font: 800 10px/1 var(--sans);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.board-row .board-icon { font-size: 12px; }
+
+.board-row .board-count {
+  margin-left: auto;
+  font: 600 10px/1 var(--mono);
+  color: var(--text-faint);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.board-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 6px;
+}
+
+.board-empty {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-style: italic;
+  padding: 2px 0;
+}
+
+.mon-chip {
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--card);
+  padding: 6px 8px 7px;
+  min-width: 0;
+}
+
+.mon-chip.on-field { border-color: var(--poke-yellow); box-shadow: 0 0 0 2px rgba(255, 203, 5, 0.22); }
+.mon-chip.fainted { opacity: 0.5; filter: saturate(0.3); }
+
+.mon-chip .mon-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mon-chip .mon-name b {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mon-badge {
+  flex: none;
+  font: 800 7.5px/1 var(--sans);
+  letter-spacing: 0.5px;
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.mon-badge.field { background: rgba(255, 203, 5, 0.3); color: var(--ink); }
+.mon-badge.status { background: rgba(214, 59, 59, 0.15); color: var(--red); }
+.mon-badge.tera { background: linear-gradient(90deg, rgba(227, 53, 13, 0.2), rgba(42, 117, 187, 0.2)); color: var(--ink); }
+
+.mon-hp {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line-soft);
+  margin: 5px 0 4px;
+  overflow: hidden;
+}
+
+.mon-hp i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--green);
+  transition: width 500ms ease;
+}
+
+.mon-hp.mid i { background: #e0a41b; }
+.mon-hp.low i { background: var(--red); }
+
+.mon-chip .mon-detail {
+  font: 500 9.5px/1.35 var(--mono);
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.board-field {
+  font: 600 10.5px/1 var(--sans);
+  color: var(--text-dim);
+}
+
+/* Thought-process cards: one cartoon box per question. */
+
 .mind-sections {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 7px 14px;
+  gap: 8px;
 }
 
 @media (max-width: 700px) {
   .mind-sections { grid-template-columns: 1fr; }
 }
 
-.mind-section { min-width: 0; }
-
-.mind-section h4 {
-  margin: 0 0 2px;
-  font-size: 10px;
-  letter-spacing: 1.1px;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  font-weight: 700;
+.mind-section {
+  min-width: 0;
+  border: 1.5px solid var(--line-soft);
+  border-radius: 12px;
+  background: var(--card);
+  padding: 8px 11px 9px;
+  box-shadow: 0 2px 6px rgba(28, 43, 74, 0.05);
 }
 
-.client-card[data-side="p1"] .mind-section h4 { color: rgba(227, 53, 13, 0.8); }
-.client-card[data-side="p2"] .mind-section h4 { color: rgba(42, 117, 187, 0.85); }
+.mind-section h4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.3px;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.mind-section h4 .section-icon { font-size: 12px; }
+
+.client-card[data-side="p1"] .mind-section { border-top: 3px solid rgba(227, 53, 13, 0.45); }
+.client-card[data-side="p2"] .mind-section { border-top: 3px solid rgba(42, 117, 187, 0.5); }
+
+/* Fresh decisions pop their cards in one after another. */
+.pop-in {
+  animation: mind-pop 420ms cubic-bezier(0.2, 0.9, 0.3, 1.15) both;
+}
+
+@keyframes mind-pop {
+  from { opacity: 0; transform: translateY(8px) scale(0.94); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pop-in { animation: none; }
+  .mon-hp i { transition: none; }
+}
 
 .mind-section ul {
   margin: 0;

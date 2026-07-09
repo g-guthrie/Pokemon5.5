@@ -20,17 +20,19 @@ const AGENT_PRESETS = [
   'openrouter:minimax/minimax-m3:low',
   'openrouter:deepseek/deepseek-v4-flash:low',
 ];
+// Each analysis field gets its own question-shaped card in the Model Mind,
+// popping in one after another as the thought process fills.
 const ANALYSIS_SECTIONS = [
-  ['gameStateSummary', 'Board read'],
-  ['winConditions', 'Win path'],
-  ['loseConditions', 'Loss risk'],
-  ['setupLines', 'Setup lines'],
-  ['sweepPlans', 'Sweep plans'],
-  ['safeSwitches', 'Pivots'],
-  ['opponentLikelyPlan', 'Opponent plan'],
-  ['biggestThreats', 'Threats'],
-  ['riskAssessment', 'Risk'],
-  ['candidateChoices', 'Candidates'],
+  ['gameStateSummary', '\u{1F9ED}', 'What is the state of the game?'],
+  ['winConditions', '\u{1F3C6}', 'How do we win?'],
+  ['loseConditions', '⚠️', 'How could we lose?'],
+  ['setupLines', '\u{1F4C8}', 'What setups are promising?'],
+  ['sweepPlans', '\u{1F4A5}', 'What could sweep?'],
+  ['safeSwitches', '\u{1F501}', 'Safe pivots?'],
+  ['opponentLikelyPlan', '\u{1F52E}', 'What is their plan?'],
+  ['biggestThreats', '\u{1F3AF}', 'Biggest threats right now?'],
+  ['riskAssessment', '\u{1F3B2}', 'What is the risk?'],
+  ['candidateChoices', '⚖️', 'Candidate moves compared'],
 ];
 
 const $ = id => document.getElementById(id);
@@ -131,6 +133,74 @@ function usageLine(usage) {
 
 /* ---------------- mind card ---------------- */
 
+// HP text like "184/232 par" or "0 fnt" → a percentage plus badges.
+function hpParts(condition = '') {
+  const text = String(condition).trim();
+  if (!text || /^0\b/.test(text) || /\bfnt\b/.test(text)) return {pct: 0, fainted: true, status: ''};
+  const match = text.match(/^(\d+)\/(\d+)(?:\s+([a-z]+))?/i);
+  if (!match) return {pct: 100, fainted: false, status: ''};
+  return {
+    pct: Math.max(0, Math.min(100, Math.round((Number(match[1]) / Math.max(1, Number(match[2]))) * 100))),
+    fainted: false,
+    status: match[3] || '',
+  };
+}
+
+function buildMonChip(mon) {
+  const hp = hpParts(mon.condition);
+  const fainted = hp.fainted || mon.fainted;
+  const chip = el('div', `mon-chip${fainted ? ' fainted' : ''}${mon.active ? ' on-field' : ''}`);
+  const nameRow = el('div', 'mon-name');
+  nameRow.appendChild(el('b', '', mon.name || mon.species || '?'));
+  if (mon.active) nameRow.appendChild(el('span', 'mon-badge field', 'on field'));
+  if (hp.status || mon.status) nameRow.appendChild(el('span', 'mon-badge status', (hp.status || mon.status).toUpperCase()));
+  if (mon.terastallized) nameRow.appendChild(el('span', 'mon-badge tera', 'TERA'));
+  chip.appendChild(nameRow);
+  const bar = el('div', `mon-hp${fainted ? '' : hp.pct <= 25 ? ' low' : hp.pct <= 55 ? ' mid' : ''}`);
+  const fill = el('i');
+  fill.style.width = `${fainted ? 0 : hp.pct}%`;
+  bar.appendChild(fill);
+  chip.appendChild(bar);
+  const detailBits = [];
+  if (fainted) detailBits.push('fainted');
+  if (mon.item) detailBits.push(mon.item + (mon.itemConsumed ? ' (used)' : ''));
+  if (mon.ability) detailBits.push(mon.ability);
+  const moves = mon.moves || mon.movesRevealed || [];
+  if (moves.length) detailBits.push(mon.movesRevealed ? `seen: ${moves.join(', ')}` : moves.join(', '));
+  const detail = el('div', 'mon-detail', detailBits.join(' · '));
+  detail.title = detailBits.join('\n');
+  chip.appendChild(detail);
+  return chip;
+}
+
+// The "known context" strip: exactly what this player can see — its own full
+// team, and only what the opponent has revealed so far.
+function buildBoard(board) {
+  const wrap = el('div', 'mind-board');
+  const rows = [
+    ['\u{1F9EC}', 'Your team', board.own || [], 'own'],
+    ['\u{1F441}', 'Opponent revealed', board.opponentSeen || [], 'foe'],
+  ];
+  for (const [icon, label, mons, kind] of rows) {
+    const row = el('div', `board-row ${kind}`);
+    const head = el('div', 'board-label');
+    head.appendChild(el('span', 'board-icon', icon));
+    head.appendChild(el('span', '', label));
+    if (kind === 'foe') head.appendChild(el('span', 'board-count', `${mons.length}/6 seen`));
+    row.appendChild(head);
+    const strip = el('div', 'board-strip');
+    if (!mons.length) strip.appendChild(el('div', 'board-empty', 'nothing revealed yet'));
+    for (const mon of mons) strip.appendChild(buildMonChip(mon));
+    row.appendChild(strip);
+    wrap.appendChild(row);
+  }
+  const fieldBits = [board.weather, board.terrain].filter(Boolean);
+  if (fieldBits.length) {
+    wrap.appendChild(el('div', 'board-field', `☁️ ${fieldBits.join(' · ')}`));
+  }
+  return wrap;
+}
+
 function renderMind(container, data, options = {}) {
   container.replaceChildren();
   const head = el('div', 'mind-head');
@@ -151,15 +221,32 @@ function renderMind(container, data, options = {}) {
     return;
   }
 
+  const animate = Boolean(options.animate);
+  let popIndex = 0;
+  const pop = node => {
+    if (!animate) return node;
+    node.classList.add('pop-in');
+    node.style.animationDelay = `${Math.min(popIndex * 90, 1100)}ms`;
+    popIndex += 1;
+    return node;
+  };
+
+  if (data.board && (data.board.own?.length || data.board.opponentSeen?.length)) {
+    container.appendChild(pop(buildBoard(data.board)));
+  }
+
   const sections = el('div', 'mind-sections');
   const analysis = data.analysis || {};
-  for (const [key, label] of ANALYSIS_SECTIONS) {
+  for (const [key, icon, question] of ANALYSIS_SECTIONS) {
     const items = Array.isArray(analysis[key]) ? analysis[key].filter(Boolean) : [];
     if (!items.length) continue;
-    const section = el('div', 'mind-section');
-    section.appendChild(el('h4', '', label));
+    const section = pop(el('div', 'mind-section'));
+    const header = el('h4');
+    header.appendChild(el('span', 'section-icon', icon));
+    header.appendChild(el('span', '', question));
+    section.appendChild(header);
     const list = el('ul');
-    const cap = key === 'candidateChoices' ? 6 : 4;
+    const cap = key === 'candidateChoices' ? 8 : 6;
     for (const item of items.slice(0, cap)) {
       const li = el('li', '', String(item));
       if (key === 'candidateChoices' && data.choice && String(item).startsWith(data.choice)) {
@@ -790,8 +877,9 @@ function renderLiveRun() {
         usage: latest.usage,
         prompt: latest.prompt,
         rawText: latest.rawText,
+        board: run?.lastBoards?.[role] || null,
         turn: action?.turn ?? run?.currentTurn ?? null,
-      }, {title: 'Model mind'});
+      }, {title: 'Model mind', animate: true});
     } else if (!key && !live.lastCallKey[role]) {
       renderMind($(`live-mind-${role}`), null, {
         title: 'Model mind',
@@ -1034,6 +1122,7 @@ class ReplayEngine {
         choice: action.choice,
         label: action.action?.label || '',
         call: this.artifact.modelCalls?.[action.callIndex] || null,
+        observationIndex: action.observationIndex ?? null,
         anchorIndex: anchor.index,
       });
       this.decisionsByAnchor.set(anchor.index, this.decisions.at(-1));
@@ -1257,6 +1346,44 @@ class ReplayEngine {
   }
 }
 
+// Replays carry full PlayerObservations in the artifact; distill the same
+// known-context board the live server telemetry sends.
+function boardFromObservation(observation) {
+  if (!observation) return null;
+  return {
+    turn: observation.turn ?? null,
+    weather: observation.field?.weather?.name || '',
+    terrain: observation.field?.terrain?.name || '',
+    own: (observation.self?.team || []).slice(0, 6).map(mon => ({
+      name: mon.name || mon.species || '',
+      species: mon.species || '',
+      condition: mon.condition || '',
+      active: Boolean(mon.active),
+      item: mon.item || '',
+      ability: mon.ability || '',
+      teraType: mon.teraType || '',
+      terastallized: Boolean(mon.terastallized),
+      moves: (mon.moves || []).slice(0, 4),
+    })),
+    opponentSeen: (observation.opponent?.revealedTeam || [])
+      .filter(mon => mon && mon.revealed)
+      .slice(0, 6)
+      .map(mon => ({
+        name: mon.name || mon.species || '',
+        species: mon.species || '',
+        condition: mon.condition || '',
+        active: Boolean(mon.active),
+        fainted: Boolean(mon.fainted),
+        status: mon.status || '',
+        item: mon.item || mon.itemLastKnown || '',
+        itemConsumed: Boolean(mon.itemConsumed),
+        ability: mon.ability || '',
+        teraType: mon.teraType || '',
+        movesRevealed: (mon.movesRevealed || []).slice(0, 4),
+      })),
+  };
+}
+
 function isPracticeReplay(replay) {
   const providers = [replay.agents?.p1?.provider, replay.agents?.p2?.provider];
   return providers.every(provider => provider === 'standin' || provider === 'heuristic' || !provider);
@@ -1434,6 +1561,7 @@ const replayUI = {
 
   onDecision(decision, options = {}) {
     const call = decision.call || {};
+    const observationRecord = this.engine?.artifact?.observations?.[decision.observationIndex];
     renderMind($(`replay-mind-${decision.role}`), {
       analysis: call.analysis,
       choice: decision.choice,
@@ -1443,8 +1571,9 @@ const replayUI = {
       usage: call.usage,
       prompt: call.prompt,
       rawText: call.rawText,
+      board: boardFromObservation(observationRecord?.observation),
       turn: decision.turn,
-    }, {title: 'Recorded mind'});
+    }, {title: 'Recorded mind', animate: !options.instant});
     const chip = $(`replay-chip-${decision.role}`);
     chip.textContent = decision.label || decision.choice;
     if (!options.instant) {

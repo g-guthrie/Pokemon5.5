@@ -338,6 +338,7 @@ function startLiveRun(body = {}, sessionId = '') {
     fallbackCount: 0,
     invalidChoiceCount: 0,
     lastObservation: null,
+    lastBoards: {p1: null, p2: null},
     lastModelCall: null,
     lastModelCalls: [],
     lastActions: [],
@@ -975,6 +976,10 @@ async function runLiveMatch(run) {
       onObservation: ({run: match, observationRecord}) => {
         copyMatchTelemetry(run, match);
         run.lastObservation = summarizeLiveObservation(observationRecord);
+        const role = observationRecord?.role;
+        if (role === 'p1' || role === 'p2') {
+          run.lastBoards[role] = summarizeLiveBoard(observationRecord.observation);
+        }
       },
       onModelCall: ({run: match, call, callIndex}) => {
         copyMatchTelemetry(run, match);
@@ -1052,6 +1057,46 @@ function summarizeLiveObservation(record = {}) {
   };
 }
 
+// The Model Mind's "known context" block: exactly what this player can see —
+// its own full private team, and only what the opponent has revealed. Same
+// hidden-info boundary as the prompt itself.
+function summarizeLiveBoard(observation = {}) {
+  const own = (observation.self?.team || []).slice(0, 6).map(mon => ({
+    name: sanitizeText(mon.name || mon.species || ''),
+    species: sanitizeText(mon.species || ''),
+    condition: sanitizeText(mon.condition || ''),
+    active: Boolean(mon.active),
+    item: sanitizeText(mon.item || ''),
+    ability: sanitizeText(mon.ability || ''),
+    teraType: sanitizeText(mon.teraType || ''),
+    terastallized: Boolean(mon.terastallized),
+    moves: (mon.moves || []).slice(0, 4).map(move => sanitizeText(String(move))),
+  }));
+  const opponentSeen = (observation.opponent?.revealedTeam || [])
+    .filter(mon => mon && mon.revealed)
+    .slice(0, 6)
+    .map(mon => ({
+      name: sanitizeText(mon.name || mon.species || ''),
+      species: sanitizeText(mon.species || ''),
+      condition: sanitizeText(mon.condition || ''),
+      active: Boolean(mon.active),
+      fainted: Boolean(mon.fainted),
+      status: sanitizeText(mon.status || ''),
+      item: sanitizeText(mon.item || mon.itemLastKnown || ''),
+      itemConsumed: Boolean(mon.itemConsumed),
+      ability: sanitizeText(mon.ability || ''),
+      teraType: sanitizeText(mon.teraType || ''),
+      movesRevealed: (mon.movesRevealed || []).slice(0, 4).map(move => sanitizeText(String(move))),
+    }));
+  return {
+    turn: observation.turn ?? null,
+    weather: sanitizeText(observation.field?.weather?.name || ''),
+    terrain: sanitizeText(observation.field?.terrain?.name || ''),
+    own,
+    opponentSeen,
+  };
+}
+
 function summarizeLiveModelCall(call = {}, callIndex = null) {
   return {
     at: call.at || '',
@@ -1113,9 +1158,9 @@ function summarizeDecisionAnalysis(analysis = null) {
   ]) {
     if (!Array.isArray(analysis[key])) continue;
     output[key] = analysis[key]
-      .map(value => sanitizeText(String(value || '')).slice(0, 320))
+      .map(value => sanitizeText(String(value || '')).slice(0, 420))
       .filter(Boolean)
-      .slice(0, key === 'candidateChoices' ? 6 : 4);
+      .slice(0, key === 'candidateChoices' ? 8 : 6);
   }
   return output;
 }
@@ -1153,6 +1198,7 @@ function summarizeLiveRun(run) {
     fallbackCount: run.fallbackCount || 0,
     invalidChoiceCount: run.invalidChoiceCount || 0,
     lastObservation: run.lastObservation || null,
+    lastBoards: run.lastBoards || null,
     lastModelCall: run.lastModelCall || null,
     lastModelCalls: run.lastModelCalls || [],
     lastActions: run.lastActions || [],

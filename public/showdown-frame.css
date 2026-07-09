@@ -26,6 +26,61 @@ html.dark body {
   background: #181a1f;
 }
 
+/* ---- Pokémon-grade reskin of the dark client ----------------------------
+   The client's flat greys become the arena's navy family: deep navy glass,
+   navy panels, yellow-lit buttons on hover. Scoped under html.dark so the
+   light theme (operator console) is untouched. */
+
+html.dark,
+html.dark body {
+  background: #101a30;
+}
+
+/* Battle art covers this during play; it only shows pre-battle and after
+   the final message, where grey would break the navy glass. */
+html.dark .battle {
+  background-color: #16233f !important;
+}
+
+html.dark .battle-log {
+  background: #131e36 !important;
+  border-color: #2b3d63 !important;
+  color: #c8d8ef !important;
+}
+
+html.dark .battle-log h2,
+html.dark .battle-log .battle-history {
+  border-color: #2b3d63 !important;
+}
+
+html.dark .battle-controls,
+html.dark .controls {
+  background: #1a2740 !important;
+  color: #dbe6f5 !important;
+}
+
+html.dark .battle-controls .button,
+html.dark .battle-controls button,
+html.dark .movemenu button,
+html.dark .switchmenu button {
+  background: linear-gradient(180deg, #27395e, #1f2e4d) !important;
+  border: 1px solid #3a4f7d !important;
+  color: #e6eefb !important;
+  border-radius: 8px !important;
+}
+
+html.dark .battle-controls .button:hover,
+html.dark .battle-controls button:hover,
+html.dark .movemenu button:hover,
+html.dark .switchmenu button:hover {
+  border-color: #ffcb05 !important;
+  box-shadow: 0 0 0 2px rgba(255, 203, 5, 0.25) !important;
+}
+
+html.dark .battle-controls button:disabled {
+  opacity: 0.45;
+}
+
 /* Hide chrome that makes no sense for a render-only benchmark viewer: chat
    input, userlist, chat toggle, battle options, the timer button, and the
    end-of-battle upload/share/menu buttons (they target pokemonshowdown.com). */
@@ -56,7 +111,7 @@ body[data-view-mode="controls"] {
 /* Match the dark client's controls background so the alternating overlay is
    indistinguishable from the base client's own controls area. */
 html.dark body[data-view-mode="controls"] {
-  background: #444444;
+  background: #1a2740;
 }
 
 body[data-view-mode="controls"] #battle-root {
