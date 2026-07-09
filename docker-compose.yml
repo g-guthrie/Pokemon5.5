@@ -1,0 +1,27 @@
+services:
+  arena:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - arena-artifacts:/app/artifacts
+    environment:
+      # cloudflared fronts the server, so forwarded visitor IPs drive the
+      # per-visitor rate limits. Never set this when the port is exposed
+      # directly to the internet.
+      TRUST_PROXY: "1"
+
+  # Free Cloudflare Tunnel: outbound-only connection, TLS and WebSocket
+  # proxying handled by Cloudflare's edge. Create the tunnel in the Zero
+  # Trust dashboard, point its public hostname at http://arena:8123, and
+  # pass the token: TUNNEL_TOKEN=... docker compose up -d
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    depends_on:
+      - arena
+
+volumes:
+  arena-artifacts:
