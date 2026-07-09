@@ -33,18 +33,18 @@ const observation = {
     team: [
       {slot: 1, activeSlot: 1, name: 'Miraidon', species: 'Miraidon', condition: '301/341', active: true, item: 'Choice Specs', ability: 'Hadron Engine', nature: 'Timid', moves: ['Electro Drift', 'Draco Meteor', 'Volt Switch', 'Protect'], teraType: 'Electric', evs: {spa: 252, spe: 252}, ivs: {atk: 0}},
       {slot: 2, activeSlot: 2, name: 'Incineroar', species: 'Incineroar', condition: '332/394', active: true, item: 'Sitrus Berry', ability: 'Intimidate', nature: 'Careful', moves: ['Fake Out', 'Parting Shot', 'Flare Blitz', 'Knock Off'], teraType: 'Grass'},
-      {slot: 3, name: 'Flutter Mane', species: 'Flutter Mane', condition: '231/231', active: false, item: 'Booster Energy', ability: 'Protosynthesis', nature: 'Timid', moves: ['Moonblast', 'Shadow Ball', 'Icy Wind', 'Protect'], teraType: 'Fairy'},
+      {slot: 3, name: 'Flutter Mane', species: 'Flutter Mane', condition: '231/231', active: false, item: 'Booster Energy', ability: 'Protosynthesis', nature: 'Timid', moves: ['Moonblast', 'Shadow Ball', 'Icy Wind', 'Protect'], teraType: 'Fairy', stats: {hp: 231, atk: 76, def: 96, spa: 297, spd: 246, spe: 306}},
     ],
     sideConditions: {tailwind: {name: 'Tailwind', layers: 1, startedTurn: 2}},
   },
   opponent: {
     activePokemon: [
-      {key: 'p2:arcanine', name: 'Arcanine', species: 'Arcanine', condition: '70/100', active: true, revealed: true, itemLastKnown: 'Safety Goggles', ability: 'Intimidate', movesRevealed: ['Flare Blitz', 'Snarl']},
-      {key: 'p2:amoonguss', name: 'Amoonguss', species: 'Amoonguss', condition: '100/100', active: true, revealed: true, movesRevealed: ['Spore', 'Rage Powder']},
+      {key: 'p2:arcanine', name: 'Arcanine', species: 'Arcanine', level: 79, condition: '70/100', active: true, revealed: true, itemLastKnown: 'Safety Goggles', ability: 'Intimidate', movesRevealed: ['Flare Blitz', 'Snarl']},
+      {key: 'p2:amoonguss', name: 'Amoonguss', species: 'Amoonguss', level: 88, condition: '100/100 slp', active: true, revealed: true, status: 'slp', statusTurn: 3, movesRevealed: ['Spore', 'Rage Powder']},
     ],
     revealedTeam: [
-      {key: 'p2:arcanine', name: 'Arcanine', species: 'Arcanine', condition: '70/100', active: true, revealed: true, itemLastKnown: 'Safety Goggles', ability: 'Intimidate', movesRevealed: ['Flare Blitz', 'Snarl']},
-      {key: 'p2:amoonguss', name: 'Amoonguss', species: 'Amoonguss', condition: '100/100', active: true, revealed: true, movesRevealed: ['Spore', 'Rage Powder']},
+      {key: 'p2:arcanine', name: 'Arcanine', species: 'Arcanine', level: 79, condition: '70/100', active: true, revealed: true, itemLastKnown: 'Safety Goggles', ability: 'Intimidate', movesRevealed: ['Flare Blitz', 'Snarl']},
+      {key: 'p2:amoonguss', name: 'Amoonguss', species: 'Amoonguss', level: 88, condition: '100/100 slp', active: true, revealed: true, status: 'slp', statusTurn: 3, movesRevealed: ['Spore', 'Rage Powder']},
     ],
     sideConditions: {},
   },
@@ -94,7 +94,7 @@ assert(input.screenObservation.self.team[0].moves.includes('Electro Drift'), 'ow
 assert(input.screenObservation.opponent.revealedTeam.length === 2, 'revealed opponent missing');
 assert(input.screenObservation.source.opponentHiddenTeamIncluded === false, 'hidden-info marker missing');
 assert(!Object.hasOwn(input.screenObservation, 'seed'), 'model-facing screen observation should not include battle seed');
-assert(input.battleBriefing?.briefingSchemaVersion === 'battle-briefing.v1', 'battle briefing missing');
+assert(input.battleBriefing?.briefingSchemaVersion === 'battle-briefing.v2', 'battle briefing missing');
 assert(input.battleBriefing.visibleBoard.activeMatchup.self.length === 2, 'briefing missing own active slots');
 assert(input.battleBriefing.playerViewNow.activeBoard.self.length === 2, 'player view missing own active slots');
 assert(input.battleBriefing.playerViewNow.boardMemory.recentEvents.length === 0, 'player view should expose recent events array');
@@ -106,6 +106,25 @@ assert(JSON.stringify(input.responseOrder) === JSON.stringify([...REQUIRED_ANALY
 assert(input.legalActions.includes('switch 3, move 2 1'), 'switch legal action missing');
 assert(input.legalActions.every(action => typeof action === 'string'), 'legal actions should be exact choice strings');
 assert(input.legalActionPartCatalog.some(part => part.choice === 'switch 3' && part.pokemon === 'Flutter Mane'), 'part catalog missing switch details');
+
+// v7 screen-equivalent context: everything a hover-tooltip shows a human.
+assert(input.dexContext.moves['Electro Drift']?.type === 'Electric', 'dex context missing own move card');
+assert(Number(input.dexContext.moves['Electro Drift']?.basePower) === 100, 'dex move card missing base power');
+assert(input.dexContext.moves['Spore']?.category === 'Status', 'dex context missing revealed opponent move card');
+assert(input.dexContext.species['Amoonguss']?.possibleAbilities?.includes('Regenerator'), 'dex species card missing possible abilities');
+assert(Array.isArray(input.dexContext.species['Miraidon']?.types), 'dex species card missing typing');
+const arcanineBriefing = input.battleBriefing.opponentSide.active.find(mon => mon.species === 'Arcanine');
+assert(Number.isFinite(arcanineBriefing?.estimatedStats?.spe), 'opponent briefing missing random-battle stat estimate');
+assert(arcanineBriefing?.baseStats?.atk === 110, 'opponent briefing missing base stats');
+const amoongussBriefing = input.battleBriefing.opponentSide.active.find(mon => mon.species === 'Amoonguss');
+assert(amoongussBriefing?.statusTurnsElapsed === 1, 'opponent briefing missing status turn counter');
+const benchFlutterMane = input.battleBriefing.ownSide.bench.find(mon => mon.species === 'Flutter Mane');
+assert(benchFlutterMane?.stats?.spe === 306, 'own bench stats should not be stripped');
+assert(input.battleBriefing.visibleBoard.sideConditions.self.tailwind?.standardDuration?.includes('4 turns'), 'side condition missing standard duration');
+assert(input.battleBriefing.visibleBoard.sideConditions.self.tailwind?.turnsElapsed === 2, 'side condition missing turns elapsed');
+assert(input.battleBriefing.opponentSide.unrevealedCount === 4, 'briefing missing unrevealed opponent count');
+const miraidonBriefing = input.battleBriefing.ownSide.active.find(mon => mon.species === 'Miraidon');
+assert(miraidonBriefing?.types?.includes('Electric'), 'own briefing missing current typing');
 
 const prompt = buildChoicePrompt('p1', observation, legalActions);
 for (const needle of [
@@ -130,12 +149,17 @@ for (const needle of [
   'Safety Goggles',
   'move 1 1, move 1 2',
   'opponentHiddenTeamIncluded',
+  'dexContext',
+  'possibleAbilities',
+  'estimatedStats',
+  'standardDuration',
+  'unrevealedCount',
 ]) {
   assert(prompt.includes(needle), `prompt missing ${needle}`);
 }
 assert(!prompt.includes('unrevealed bench species'), 'prompt should not invent opponent bench');
 assert(!prompt.includes('550000'), 'prompt should not expose benchmark seed');
-assert(prompt.length < 25000, 'synthetic prompt should stay compact');
+assert(prompt.length < 45000, 'synthetic prompt should stay bounded');
 
 const analysis = normalizeDecisionAnalysis({
   gameStateSummary: ['Electric Terrain favors Miraidon.'],

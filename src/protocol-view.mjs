@@ -155,7 +155,12 @@ function applyKnowledgeEvent(view, parts) {
   }
   if (tag === '-status' || tag === '-curestatus') {
     const mon = ensurePokemon(view, parts[1]);
-    if (mon) mon.status = tag === '-status' ? parts[2] || '' : '';
+    if (mon) {
+      mon.status = tag === '-status' ? parts[2] || '' : '';
+      // A human counts sleep turns and toxic stages from when the badge
+      // appeared; record the onset turn so the briefing can do the same math.
+      mon.statusTurn = tag === '-status' ? view.turn || 0 : null;
+    }
     return;
   }
   if (tag === '-boost' || tag === '-unboost') {

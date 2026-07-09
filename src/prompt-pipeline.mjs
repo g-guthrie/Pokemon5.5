@@ -1,5 +1,14 @@
-export const PROMPT_SCHEMA_VERSION = 'showdown-choice-prompt.v6';
-export const RESPONSE_SCHEMA_VERSION = 'showdown-choice-response.v5';
+import {
+  currentTypes,
+  enrichConditionMap,
+  enrichCondition,
+  moveCard,
+  randomBattleStatEstimate,
+  speciesCard,
+} from './dex-context.mjs';
+
+export const PROMPT_SCHEMA_VERSION = 'showdown-choice-prompt.v7';
+export const RESPONSE_SCHEMA_VERSION = 'showdown-choice-response.v6';
 export const REQUIRED_ANALYSIS_FIELDS = [
   'gameStateSummary',
   'winConditions',
@@ -14,8 +23,10 @@ export const REQUIRED_ANALYSIS_FIELDS = [
 ];
 export const RESPONSE_JSON_SCHEMA_NAME = 'showdown_choice_response';
 
-const HISTORY_TEXT_LIMIT = 60;
-const HISTORY_EVENT_LIMIT = 40;
+// A human can scroll the entire battle log; keep the window wide enough that
+// whole games stay visible to the model.
+const HISTORY_TEXT_LIMIT = 200;
+const HISTORY_EVENT_LIMIT = 80;
 
 export function buildModelInput(role, observation, legalActions) {
   const screenObservation = compactExtractedState(observation);
@@ -68,35 +79,68 @@ export function buildModelInput(role, observation, legalActions) {
       'Predict the opponent likely plan from only revealed information.',
       'Name the biggest immediate threats and what your selected choice covers.',
       'Assess the main risk of your choice without using private or unrevealed opponent information.',
-      'Compare exactly 2 concrete candidate choices by exact legalActions[] string, including their upside and main risk.',
+      'Compare 2 to 4 concrete candidate choices by exact legalActions[] string, including their upside and main risk.',
       'Then commit to one exact legal action from legalActions[].',
     ],
     outputBudget: {
-      style: 'strictly concise',
-      perString: 'one short sentence, no markdown',
-      arrays: 'prefer exactly 1 string per tactical field; candidateChoices should have exactly 2 strings',
-      reason: 'one short sentence',
-      hardLimit: 'keep the entire JSON response under 1200 output tokens',
+      style: 'thorough and structured; every sentence should carry a concrete tactical fact',
+      perString: '1-2 full sentences, no markdown',
+      arrays: '1-3 strings per tactical field; candidateChoices should have 2-4 strings',
+      reason: '1-2 sentences',
+      hardLimit: 'keep the entire JSON response under 4000 output tokens',
     },
     responseSchema: {
-      gameStateSummary: ['Exactly 1 short tactical sentence about the current board.'],
-      winConditions: ['Exactly 1 short sentence about how this side can win from known information.'],
-      loseConditions: ['Exactly 1 short sentence naming the most imminent way this side loses and whether it is live this turn.'],
-      setupLines: ['0-1 short sentence about viable setup/support, or [] if none.'],
-      sweepPlans: ['0-1 short sentence about damage or cleaning lines, or [] if none.'],
-      safeSwitches: ['0-1 short sentence about useful switches or why none are needed.'],
-      opponentLikelyPlan: ['Exactly 1 short sentence based only on revealed information.'],
-      biggestThreats: ['Exactly 1 short sentence naming immediate threats.'],
-      riskAssessment: ['Exactly 1 short sentence naming what can go wrong with the selected plan.'],
-      candidateChoices: ['Exactly 2 short strings. Each must start with an exact legalActions[] string, then state upside and risk.'],
+      gameStateSummary: ['1-3 sentences covering the active board, speed, HP, field, and pressure.'],
+      winConditions: ['1-3 sentences about how this side can win from known information.'],
+      loseConditions: ['1-3 sentences naming the most imminent ways this side loses and whether they are live this turn.'],
+      setupLines: ['0-2 sentences about viable setup/support, or [] if none.'],
+      sweepPlans: ['0-2 sentences about damage or cleaning lines, or [] if none.'],
+      safeSwitches: ['0-2 sentences about useful switches or why none are needed.'],
+      opponentLikelyPlan: ['1-3 sentences based only on revealed information.'],
+      biggestThreats: ['1-3 sentences naming immediate threats and what covers them.'],
+      riskAssessment: ['1-2 sentences naming what can go wrong with the selected plan.'],
+      candidateChoices: ['2-4 strings. Each must start with an exact legalActions[] string, then state upside and risk.'],
       choice: 'Exact legalActions[] string.',
-      reason: 'One concise final justification for the selected legal choice.',
+      reason: 'A concise final justification for the selected legal choice.',
     },
     battleBriefing,
     situation,
+    dexContext: buildDexContext(screenObservation),
     legalActionPartCatalog,
     legalActions: choices,
     screenObservation,
+  };
+}
+
+// Everything a hover-tooltip would tell a human: move cards for every own
+// move and every revealed opponent move, species cards (typing, base stats,
+// possible abilities) for every visible Pokemon. Single copy, referenced by
+// name from the briefing.
+function buildDexContext(state = {}) {
+  const moves = {};
+  const species = {};
+  const addMove = name => {
+    if (!name || moves[name]) return;
+    const card = moveCard(name);
+    if (card) moves[name] = card;
+  };
+  const addSpecies = name => {
+    if (!name || species[name]) return;
+    const card = speciesCard(name);
+    if (card) species[name] = card;
+  };
+  for (const mon of state.self?.team || []) {
+    addSpecies(mon.species);
+    for (const move of mon.moves || []) addMove(move);
+  }
+  for (const mon of state.opponent?.revealedTeam || []) {
+    addSpecies(mon.species);
+    for (const move of mon.movesRevealed || []) addMove(move);
+  }
+  return {
+    note: 'Official dex facts a player reads from screen tooltips: move type/category/power/accuracy/PP, species typing/base stats/possible abilities. possibleAbilities lists candidates only; the opponent’s real ability stays unknown until revealed.',
+    moves,
+    species,
   };
 }
 
@@ -114,7 +158,7 @@ export function buildChoicePrompt(role, observation, legalActions) {
 
 export function buildChoiceResponseJsonSchema(legalActions = []) {
   const choices = compactLegalActions(legalActions);
-  const tacticalString = {type: 'string', maxLength: 220};
+  const tacticalString = {type: 'string', maxLength: 420};
   // No maxItems: Anthropic-family structured outputs (Anthropic API, Bedrock,
   // Azure via OpenRouter) reject 'maxItems' on array types. Item-count caps
   // are advisory anyway: prompts ask for concise notes and consumers truncate.
@@ -128,11 +172,11 @@ export function buildChoiceResponseJsonSchema(legalActions = []) {
   }
   properties.candidateChoices = {
     type: 'array',
-    items: {type: 'string', maxLength: 280},
+    items: {type: 'string', maxLength: 520},
     minItems: 1,
   };
   properties.choice = choices.length ? {type: 'string', enum: choices} : {type: 'string'};
-  properties.reason = {type: 'string', maxLength: 240};
+  properties.reason = {type: 'string', maxLength: 400};
   return {
     type: 'object',
     properties,
@@ -239,39 +283,53 @@ export function compactExtractedState(extracted = {}) {
   };
 }
 
+function enrichFieldView(field = {}, turn) {
+  return {
+    weather: field?.weather ? enrichCondition(field.weather, turn) : field?.weather ?? null,
+    terrain: field?.terrain ? enrichCondition(field.terrain, turn) : field?.terrain ?? null,
+    conditions: enrichConditionMap(field?.conditions, turn),
+  };
+}
+
 function buildBattleBriefing(state = {}, legalActions = [], legalActionPartCatalog = []) {
   const ownActive = state.self?.activePokemon || [];
   const ownTeam = state.self?.team || [];
   const opponentActive = state.opponent?.activePokemon || [];
   const opponentRevealed = state.opponent?.revealedTeam || [];
+  const turn = state.turn ?? null;
+  const summarizeOwn = mon => summarizeOwnPokemonForBriefing(mon);
+  const summarizeOpponent = mon => summarizeOpponentPokemonForBriefing(mon, state);
   return {
-    briefingSchemaVersion: 'battle-briefing.v1',
-    turn: state.turn ?? null,
+    briefingSchemaVersion: 'battle-briefing.v2',
+    turn,
     requestId: state.requestId ?? null,
     requestFresh: Boolean(state.requestFresh),
     waiting: Boolean(state.waiting),
     formatid: state.formatid || '',
     visibleBoard: {
       activeMatchup: {
-        self: ownActive.map(summarizeOwnPokemonForBriefing),
-        opponent: opponentActive.map(summarizeOpponentPokemonForBriefing),
+        self: ownActive.map(summarizeOwn),
+        opponent: opponentActive.map(summarizeOpponent),
       },
-      field: state.field || {},
+      field: enrichFieldView(state.field, turn),
       sideConditions: {
-        self: state.self?.sideConditions || {},
-        opponent: state.opponent?.sideConditions || {},
+        self: enrichConditionMap(state.self?.sideConditions, turn),
+        opponent: enrichConditionMap(state.opponent?.sideConditions, turn),
       },
     },
     playerViewNow: buildPlayerViewNow(state, legalActions),
     ownSide: {
-      active: ownActive.map(summarizeOwnPokemonForBriefing),
-      bench: ownTeam.filter(mon => !mon.active).map(summarizeOwnPokemonForBriefing),
+      active: ownActive.map(summarizeOwn),
+      bench: ownTeam.filter(mon => !mon.active).map(summarizeOwn),
       fullTeamKnown: true,
       note: 'This is your private team information and is legal for you to use.',
     },
     opponentSide: {
-      active: opponentActive.map(summarizeOpponentPokemonForBriefing),
-      revealedTeam: opponentRevealed.map(summarizeOpponentPokemonForBriefing),
+      active: opponentActive.map(summarizeOpponent),
+      revealedTeam: opponentRevealed.map(summarizeOpponent),
+      revealedCount: opponentRevealed.length,
+      unrevealedCount: Math.max(0, 6 - opponentRevealed.length),
+      teamSizeAssumed: 6,
       unrevealedBenchKnown: false,
       note: 'Only revealed opponent Pokemon and revealed public attributes are known.',
     },
@@ -294,10 +352,11 @@ function buildBattleBriefing(state = {}, legalActions = [], legalActionPartCatal
     },
     knownUnknowns: {
       ownTeam: 'known fully',
+      ownBenchMovePP: 'exact current PP appears only in legalActions for the active request; bench moves are at dexContext maxPP unless the battle log shows earlier use',
       opponentActive: 'known only for revealed public fields in opponentSide.active',
-      opponentBench: 'unknown until revealed by battle protocol',
-      opponentMovesItemsAbilitiesTera: 'unknown unless explicitly present in opponentSide',
-      opponentNatureEvsIvs: 'not visible unless explicitly present; do not assume them as facts',
+      opponentBench: 'unknown until revealed by battle protocol; opponentSide.unrevealedCount says how many remain unseen',
+      opponentMovesItemsAbilitiesTera: 'unknown unless explicitly present in opponentSide; dexContext.species possibleAbilities lists candidates only',
+      opponentStats: 'estimatedStats derive from the public random-battle spread (85 EVs, 31 IVs, neutral nature) plus visible level — screen-tooltip equivalents, not revealed facts',
     },
   };
 }
@@ -345,32 +404,35 @@ function buildPlayerViewNow(state = {}, legalActions = []) {
   const ownTeam = state.self?.team || [];
   const opponentActive = state.opponent?.activePokemon || [];
   const opponentRevealed = state.opponent?.revealedTeam || [];
+  const turn = state.turn ?? null;
+  const summarizeOwn = mon => summarizeOwnPokemonForBriefing(mon);
+  const summarizeOpponent = mon => summarizeOpponentPokemonForBriefing(mon, state);
   return {
-    turn: state.turn ?? null,
+    turn,
     request: {
       requestId: state.requestId ?? null,
       fresh: Boolean(state.requestFresh),
       waiting: Boolean(state.waiting),
     },
     activeBoard: {
-      self: ownActive.map(summarizeOwnPokemonForBriefing),
-      opponent: opponentActive.map(summarizeOpponentPokemonForBriefing),
+      self: ownActive.map(summarizeOwn),
+      opponent: opponentActive.map(summarizeOpponent),
     },
     resources: {
       ownBenchAvailable: ownTeam
         .filter(mon => !mon.active && !String(mon.condition || '').endsWith(' fnt'))
-        .map(summarizeOwnPokemonForBriefing),
+        .map(summarizeOwn),
       ownFainted: ownTeam
         .filter(mon => String(mon.condition || '').endsWith(' fnt'))
         .map(mon => mon.name || mon.species || `slot ${mon.slot ?? '?'}`),
-      opponentRevealed: opponentRevealed.map(summarizeOpponentPokemonForBriefing),
+      opponentRevealed: opponentRevealed.map(summarizeOpponent),
       opponentUnrevealedBench: 'unknown until revealed',
     },
     boardMemory: {
-      field: state.field || {},
+      field: enrichFieldView(state.field, turn),
       sideConditions: {
-        self: state.self?.sideConditions || {},
-        opponent: state.opponent?.sideConditions || {},
+        self: enrichConditionMap(state.self?.sideConditions, turn),
+        opponent: enrichConditionMap(state.opponent?.sideConditions, turn),
       },
       recentText: state.history?.text?.slice(-12) || [],
       recentEvents: state.history?.recent?.slice(-12) || [],
@@ -430,7 +492,8 @@ function compactOwnPokemon(mon) {
     ivs: mon.ivs,
     moves: mon.moves,
     teraType: mon.teraType,
-    stats: mon.active ? mon.stats : undefined,
+    // The switch-menu tooltip shows full stats for bench Pokemon too.
+    stats: mon.stats || undefined,
     boosts: mon.boosts,
     volatiles: mon.volatiles,
     terastallized: mon.terastallized || undefined,
@@ -452,6 +515,7 @@ function compactKnownPokemon(mon) {
     revealed: mon.revealed,
     fainted: mon.fainted,
     status: mon.status || undefined,
+    statusTurn: mon.statusTurn ?? undefined,
     nature: mon.nature || undefined,
     evs: mon.evs || undefined,
     ivs: mon.ivs || undefined,
@@ -492,6 +556,7 @@ function summarizeOwnPokemonForBriefing(mon = {}) {
     gender: mon.gender || '',
     condition: mon.condition || '',
     hp: mon.condition || '',
+    types: currentTypes(mon.species, mon.terastallized ? mon.teraType : ''),
     item: mon.item || '',
     ability: mon.ability || '',
     nature: mon.nature || '',
@@ -506,7 +571,9 @@ function summarizeOwnPokemonForBriefing(mon = {}) {
   });
 }
 
-function summarizeOpponentPokemonForBriefing(mon = {}) {
+function summarizeOpponentPokemonForBriefing(mon = {}, state = {}) {
+  const isRandomFormat = String(state.formatid || '').includes('random');
+  const dexSpecies = speciesCard(mon.species);
   return stripEmpty({
     activeSlot: mon.activeSlot ?? null,
     role: mon.active ? 'active' : 'revealed',
@@ -517,9 +584,18 @@ function summarizeOpponentPokemonForBriefing(mon = {}) {
     gender: mon.gender || '',
     condition: mon.condition || '',
     hp: mon.condition || '',
+    types: currentTypes(mon.species, mon.terastallized ? mon.teraType : ''),
+    // Tooltip equivalents: base stats and — in randoms, where every set runs
+    // 85 EVs / 31 IVs / neutral nature — effectively exact computed stats.
+    baseStats: dexSpecies?.baseStats || undefined,
+    estimatedStats: isRandomFormat ? randomBattleStatEstimate(mon.species, mon.level) || undefined : undefined,
     revealed: Boolean(mon.revealed),
     fainted: Boolean(mon.fainted),
     status: mon.status || undefined,
+    statusSinceTurn: mon.statusTurn ?? undefined,
+    statusTurnsElapsed: mon.statusTurn != null && state.turn != null
+      ? Math.max(0, Number(state.turn) - Number(mon.statusTurn))
+      : undefined,
     nature: mon.nature || undefined,
     evs: mon.evs || undefined,
     ivs: mon.ivs || undefined,
@@ -542,12 +618,9 @@ function summarizeOpponentPokemonForBriefing(mon = {}) {
 function opponentUnknowns(mon = {}) {
   const unknowns = [];
   if (!mon.item && !mon.itemLastKnown && !mon.itemConsumed) unknowns.push('item');
-  if (!mon.ability) unknowns.push('ability');
+  if (!mon.ability) unknowns.push('ability (see dexContext.species possibleAbilities for the candidates)');
   if (!mon.teraType) unknowns.push('teraType');
   if (!mon.movesRevealed?.length) unknowns.push('moves');
-  if (!mon.nature) unknowns.push('nature');
-  if (!mon.evs) unknowns.push('evs');
-  if (!mon.ivs) unknowns.push('ivs');
   return unknowns;
 }
 

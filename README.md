@@ -84,7 +84,7 @@ the active model run, ladder, or tournament. Use `standin`, `openai:<model>:<eff
 or `openrouter:<model>:<effort>` agent specs. Pause/resume applies before the
 next model decision; stop aborts the run, propagates cancellation to in-flight
 provider fetches, and marks the artifact invalid.
-Provider agents default to `AGENT_MAX_TOKENS=2048` and request strict structured
+Provider agents default to `AGENT_MAX_TOKENS=16384` and request strict structured
 JSON with the exact legal choices in the schema, so tactical notes plus the final
 choice stay parseable. Override that environment value if you want a cheaper or
 larger response budget.
@@ -361,7 +361,7 @@ Models receive `state.extracted`, a `PlayerObservation` with:
   revealed moves, revealed abilities, item reveal/consume state, and tera reveal;
 - `source.opponentHiddenTeamIncluded: false`.
 
-Models return JSON using `showdown-choice-response.v5`. The analysis fields are
+Models return JSON using `showdown-choice-response.v6`. The analysis fields are
 short tactical notes for auditability, not free-form hidden chain-of-thought:
 
 ```json
@@ -385,13 +385,20 @@ short tactical notes for auditability, not free-form hidden chain-of-thought:
 API failures, max-turn caps, and fallbacks are counted in the artifact and make
 `validBenchmark` false.
 
-The prompt uses `showdown-choice-prompt.v6` and includes the exact legal choice
-strings, a compact atomic legal-action catalog, full own-team private data,
-visible opponent-only known data, field/side conditions, the visible battle
+The prompt uses `showdown-choice-prompt.v7` and includes the exact legal choice
+strings, a compact atomic legal-action catalog, full own-team private data
+(including bench stats), visible opponent-only known data, field/side
+conditions with turn counters and standard durations, the visible battle
 log (single copy: human-readable text in the briefing, structured recent
 events in the observation; raw protocol is not part of the on-screen human
-view and is omitted), action syntax, a compact situation summary, and a
-`battleBriefing` section shaped like a player-facing tactical screen. The
+view and is omitted), action syntax, a compact situation summary, a
+`battleBriefing` section shaped like a player-facing tactical screen, and a
+`dexContext` section carrying screen-tooltip equivalents: move cards
+(type/category/power/accuracy/PP/effect) for every own and revealed opponent
+move, species cards (typing, base stats, possible abilities) for every
+visible Pokemon, random-battle stat estimates for revealed opponents (the
+public 85 EV / 31 IV / neutral spread at the visible level), opponent
+status-turn counters, and explicit revealed/unrevealed team counts. The
 briefing separates own active/bench, revealed opponent active/team, the current
 active board, available own bench, fainted resources, field state, recent log,
 legal choice semantics, and explicit known-unknown boundaries. The response

@@ -186,6 +186,7 @@ function createKnownPokemon(mon) {
     revealed: Boolean(mon.revealed),
     fainted: Boolean(mon.fainted),
     status: mon.status || '',
+    statusTurn: mon.statusTurn ?? null,
     nature: mon.nature || '',
     evs: mon.evs || null,
     ivs: mon.ivs || null,

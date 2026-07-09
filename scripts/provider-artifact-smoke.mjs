@@ -130,8 +130,8 @@ async function run() {
     assert(providerCalls.every(call => !call.promptContainsSeed), 'provider prompt leaked benchmark seed');
     assert(artifact.modelCalls.some(call => call.provider === 'openai'), 'artifact missing OpenAI model call');
     assert(artifact.modelCalls.some(call => call.provider === 'openrouter'), 'artifact missing OpenRouter model call');
-    assert(artifact.modelCalls.every(call => call.promptSchemaVersion === 'showdown-choice-prompt.v6'), 'artifact model calls missing prompt schema');
-    assert(artifact.modelCalls.every(call => call.responseSchemaVersion === 'showdown-choice-response.v5'), 'artifact model calls missing response schema');
+    assert(artifact.modelCalls.every(call => call.promptSchemaVersion === 'showdown-choice-prompt.v7'), 'artifact model calls missing prompt schema');
+    assert(artifact.modelCalls.every(call => call.responseSchemaVersion === 'showdown-choice-response.v6'), 'artifact model calls missing response schema');
     assert(artifact.modelCalls.every(call => call.prompt && call.rawText && call.analysisComplete === true), 'artifact missing prompt/raw response/analysis contract');
     assert(artifact.modelCalls.every(call => call.analysis?.candidateChoices?.length), 'artifact missing candidate choice review');
     assert(artifact.modelCalls.every(call => call.usage), 'artifact missing provider usage metadata');
