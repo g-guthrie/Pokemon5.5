@@ -420,7 +420,7 @@ function buildDeckMonHeader(mon, fallbackName) {
   return head;
 }
 
-function buildDeckMoveButton(slot, move) {
+function buildDeckMoveButton(slot, move, opponentActive) {
   const card = dexCards.moves.get(move.name);
   const type = card?.type || 'Normal';
   const button = el('button', `deck-move type-${toDexId(type)}`);
@@ -441,29 +441,32 @@ function buildDeckMoveButton(slot, move) {
   if (move.pp != null && move.maxpp != null) bits.push(`${move.pp}/${move.maxpp} PP`);
   meta.textContent = bits.join(' · ');
   button.appendChild(meta);
-  return button;
-}
 
-function buildDeckTargetRow(slot, opponentActive) {
-  const row = el('div', 'deck-targets hidden');
-  row.dataset.targetRow = String(slot.activeSlot);
-  const targetValues = new Set();
-  for (const move of slot.moves) for (const target of move.targets) targetValues.add(target);
-  for (const value of [...targetValues].sort((a, b) => a - b)) {
-    const chip = el('button', `deck-target ${value > 0 ? 'foe' : 'ally'}`);
-    chip.type = 'button';
-    chip.dataset.pressTarget = `${slot.activeSlot}:${value}`;
-    const mon = value > 0 ? opponentActive[value - 1] : null;
-    const img = document.createElement('img');
-    img.className = 'deck-sprite tiny';
-    img.alt = '';
-    img.src = spriteUrl(mon?.species || mon?.name || '');
-    img.addEventListener('error', () => img.classList.add('hidden'));
-    if (mon) chip.appendChild(img);
-    chip.appendChild(el('span', '', value > 0 ? (mon?.name || mon?.species || `Foe ${value}`) : 'Ally'));
-    row.appendChild(chip);
+  // Targeted moves carry their own flyout, confined to this card: it opens
+  // over the button when the press needs to aim.
+  const targets = [...move.targets].sort((a, b) => a - b);
+  if (targets.length) {
+    const flyout = el('span', 'deck-move-targets');
+    flyout.appendChild(el('span', 'deck-aim-label', 'at who?'));
+    for (const [index, value] of targets.entries()) {
+      const chip = el('span', `deck-target ${value > 0 ? 'foe' : 'ally'}`);
+      chip.dataset.pressTarget = `${slot.activeSlot}:${move.moveSlot}:${value}`;
+      chip.style.transitionDelay = `${index * 60}ms`;
+      const mon = value > 0 ? opponentActive[value - 1] : null;
+      if (mon) {
+        const img = document.createElement('img');
+        img.className = 'deck-sprite tiny';
+        img.alt = '';
+        img.src = spriteUrl(mon.species || mon.name || '');
+        img.addEventListener('error', () => img.classList.add('hidden'));
+        chip.appendChild(img);
+      }
+      chip.appendChild(el('b', '', value > 0 ? (mon?.name || mon?.species || `Foe ${value}`) : 'Ally'));
+      flyout.appendChild(chip);
+    }
+    button.appendChild(flyout);
   }
-  return row;
+  return button;
 }
 
 async function renderDeck(host, observation, side, options = {}) {
@@ -500,9 +503,8 @@ async function renderDeck(host, observation, side, options = {}) {
     }
     column.appendChild(head);
     const grid = el('div', 'deck-moves');
-    for (const move of slot.moves) grid.appendChild(buildDeckMoveButton(slot, move));
+    for (const move of slot.moves) grid.appendChild(buildDeckMoveButton(slot, move, opponentActive));
     column.appendChild(grid);
-    column.appendChild(buildDeckTargetRow(slot, opponentActive));
     slotsRow.appendChild(column);
   }
   if (plan.slots.length) deck.appendChild(slotsRow);
@@ -588,14 +590,16 @@ async function animateDeckChoice(host, choice) {
       if (step.includes('terastallize')) {
         await deckPress(host, host.querySelector(`[data-press-tera="${activeSlot}"]`));
       }
-      await deckPress(host, host.querySelector(`[data-press-move="${activeSlot}:${moveSlot}"]`));
-      if (target !== null) {
-        const row = host.querySelector(`[data-target-row="${activeSlot}"]`);
-        row?.classList.remove('hidden');
-        await sleep(140);
-        await deckPress(host, host.querySelector(`[data-press-target="${activeSlot}:${target}"]`));
-        await sleep(160);
-        row?.classList.add('hidden');
+      const moveButton = host.querySelector(`[data-press-move="${activeSlot}:${moveSlot}"]`);
+      await deckPress(host, moveButton);
+      if (target !== null && moveButton) {
+        // Aim: the target flyout opens inside this move's card.
+        const flyout = moveButton.querySelector('.deck-move-targets');
+        flyout?.classList.add('open');
+        await sleep(320);
+        await deckPress(host, moveButton.querySelector(`[data-press-target="${activeSlot}:${moveSlot}:${target}"]`));
+        await sleep(240);
+        flyout?.classList.remove('open');
       }
     } else if (tokens[0] === 'switch') {
       await deckPress(host, host.querySelector(`[data-press-switch="${tokens[1]}"]`));
@@ -663,6 +667,10 @@ window.addEventListener('message', event => {
       // A P1 wait-request unblocks any queued P2 press.
       void pumpPressQueue();
     }
+    if (message.type === 'sd-controls-top') {
+      // Measured seam between the battle field and the controls region.
+      $('live-deck').style.setProperty('--deck-top', `${message.top}px`);
+    }
     if (message.type === 'sd-choice-done') {
       // Only the press we are actually waiting on may advance the queue;
       // stale done-signals from timed-out presses must not desync it.
@@ -674,6 +682,9 @@ window.addEventListener('message', event => {
   if (message.type === 'sd-ready') {
     replayUI.onFrameReady(event.source);
     applySound();
+  }
+  if (message.type === 'sd-controls-top') {
+    $('replay-deck').style.setProperty('--deck-top', `${message.top}px`);
   }
   if (message.type === 'sd-choice-done') replayUI.onChoiceDone(event.source);
 });

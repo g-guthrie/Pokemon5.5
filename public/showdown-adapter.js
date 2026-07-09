@@ -341,6 +341,27 @@
     }
   }, 3000);
 
+  // Deck mode: report where the controls region actually begins (measured,
+  // not assumed) so the parent's decision deck starts exactly at the seam
+  // and never covers the battle field. Also hard-pin the frame's scroll:
+  // any internal scroll shifts the client under the parent's deck.
+  var lastReportedTop = 0;
+  if (hideControls) {
+    setInterval(function () {
+      if (document.documentElement.scrollTop || document.body.scrollTop) {
+        document.documentElement.scrollTop = 0;
+        document.body.scrollTop = 0;
+      }
+      var controls = document.querySelector('.battle-controls');
+      if (!controls) return;
+      var top = Math.round(controls.getBoundingClientRect().top);
+      if (top > 100 && top < 760 && Math.abs(top - lastReportedTop) > 2) {
+        lastReportedTop = top;
+        notifyParent({type: 'sd-controls-top', top: top});
+      }
+    }, 250);
+  }
+
   // Every frame reports its rendered native-control height so the parent can
   // size the alternating controls overlay to cover exactly the controls area.
   var lastReportedHeight = 0;
@@ -643,7 +664,10 @@
   function boot() {
     debug('boot ' + role + (replayMode ? ' (replay)' : '') + (controlsOnly ? ' (controls)' : ''));
     if (controlsOnly && document.body) document.body.dataset.viewMode = 'controls';
-    if (hideControls && document.body) document.body.dataset.hideControls = '1';
+    if (hideControls && document.body) {
+      document.body.dataset.hideControls = '1';
+      document.documentElement.dataset.hideControlsRoot = '1';
+    }
     BattleSound.setMute(true);
     room = new BattleRoom({
       id: 'battle-localbenchmark',

@@ -961,9 +961,12 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
 .controls-overlay {
   position: absolute;
   left: 0;
-  top: calc(var(--client-scale, 1) * 370px);
+  /* --deck-top is MEASURED from the live client (the adapter reports where
+     .battle-controls actually begins); 370px is only the pre-measurement
+     fallback. The deck fills from that seam to the client's bottom edge. */
+  top: calc(var(--client-scale, 1) * var(--deck-top, 370px));
   width: calc(var(--client-scale, 1) * 640px);
-  height: calc(var(--client-scale, 1) * 390px);
+  height: calc(var(--client-scale, 1) * (760px - var(--deck-top, 370px)));
   overflow: hidden;
   z-index: 5;
   transition: opacity 160ms ease;
@@ -994,7 +997,7 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
 
 .deck-host .deck {
   width: 640px;
-  height: 390px;
+  height: calc(760px - var(--deck-top, 370px));
   transform: scale(var(--client-scale, 1));
   transform-origin: top left;
   position: relative;
@@ -1104,6 +1107,8 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
 
 .deck-move {
   appearance: none;
+  position: relative;
+  overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 10px;
   padding: 6px 10px;
@@ -1154,36 +1159,69 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
 .type-steel { --type-c1: #c8c8dc; --type-c2: #b8b8d0; color: #1c2b4a; text-shadow: none; }
 .type-fairy { --type-c1: #f4adc0; --type-c2: #ee99ac; }
 
-.deck-targets {
+/* Aim flyout: lives inside the move's own card and opens over it. */
+.deck-move-targets {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 4px;
+  inset: 0;
   z-index: 4;
   display: flex;
-  gap: 6px;
+  align-items: center;
   justify-content: center;
-  background: rgba(9, 15, 30, 0.94);
-  border: 1.5px solid rgba(255, 203, 5, 0.5);
-  border-radius: 10px;
-  padding: 6px;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px;
+  border-radius: inherit;
+  background: rgba(9, 15, 30, 0.9);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 180ms ease, visibility 180ms ease;
+}
+
+.deck-move-targets.open {
+  opacity: 1;
+  visibility: visible;
+}
+
+.deck-aim-label {
+  position: absolute;
+  top: 3px;
+  left: 8px;
+  font: 800 8px/1 var(--sans);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: rgba(255, 203, 5, 0.85);
 }
 
 .deck-target {
-  appearance: none;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   border-radius: 8px;
-  padding: 4px 8px;
+  padding: 3px 7px;
   background: #1d2b49;
   color: #dbe6f5;
-  font: 700 11px/1 var(--sans);
+  font: 700 10px/1 var(--sans);
   border: 1.5px solid rgba(255, 255, 255, 0.25);
+  text-shadow: none;
+  opacity: 0;
+  transform: translateY(5px) scale(0.9);
+  transition: opacity 200ms ease, transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
 
-.deck-target.foe { border-color: rgba(227, 53, 13, 0.65); }
-.deck-target.ally { border-color: rgba(90, 168, 232, 0.65); }
+.deck-move-targets.open .deck-target {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.deck-target b {
+  max-width: 74px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.deck-target.foe { border-color: rgba(227, 53, 13, 0.75); }
+.deck-target.ally { border-color: rgba(90, 168, 232, 0.75); }
 
 .deck-bench {
   display: flex;

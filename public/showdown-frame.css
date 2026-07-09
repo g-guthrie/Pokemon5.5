@@ -99,7 +99,14 @@ button[name="closeAndRematch"] {
 
 /* Deck mode: the arena draws its own decision deck over the controls region.
    visibility (not display) keeps the native buttons clickable for the press
-   machinery and preserves the client's layout math. */
+   machinery and preserves the client's layout math. The frame must NEVER
+   scroll internally — any scroll shifts the whole client under the parent's
+   fixed-position deck and crops the field. */
+html[data-hide-controls-root="1"],
+body[data-hide-controls="1"] {
+  overflow: hidden !important;
+}
+
 body[data-hide-controls="1"] .battle-controls {
   visibility: hidden !important;
 }
