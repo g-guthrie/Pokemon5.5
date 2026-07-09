@@ -36,6 +36,15 @@ html.dark body {
   background: #101a30;
 }
 
+/* The room container paints #444 behind the field/log and shows through in
+   every region nothing else covers (the field→controls seam, the strip
+   under the battle log). Same navy as the body so the client reads as one
+   dark glass panel. */
+html.dark .ps-room-opaque,
+html.dark .ps-room {
+  background: #101a30 !important;
+}
+
 /* Battle art covers this during play; it only shows pre-battle and after
    the final message, where grey would break the navy glass. */
 html.dark .battle {
