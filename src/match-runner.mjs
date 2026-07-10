@@ -44,9 +44,19 @@ export async function runWebSocketMatch(options = {}) {
     p1: await normalizeAgent(options.agents?.p1 || options.agentP1 || process.env.AGENT_P1 || 'standin', providerKeys),
     p2: await normalizeAgent(options.agents?.p2 || options.agentP2 || process.env.AGENT_P2 || 'standin', providerKeys),
   };
+  // The native client displays these as the trainer names: the chosen models,
+  // not anonymous benchmark seats. Mirror matches get a seat suffix.
+  const playerNames = {
+    p1: playerDisplayName(agents.p1),
+    p2: playerDisplayName(agents.p2),
+  };
+  if (playerNames.p1 === playerNames.p2) {
+    playerNames.p1 = `${playerNames.p1} P1`.slice(0, 22);
+    playerNames.p2 = `${playerNames.p2} P2`.slice(0, 22);
+  }
 
   if (options.reset !== false) {
-    await resetBattle({serverOrigin, battleId, formatid, seed});
+    await resetBattle({serverOrigin, battleId, formatid, seed, playerNames});
   }
 
   const run = {
@@ -68,6 +78,7 @@ export async function runWebSocketMatch(options = {}) {
       p1: publicAgentMetadata(agents.p1),
       p2: publicAgentMetadata(agents.p2),
     },
+    playerNames,
     validBenchmark: true,
     apiErrorCount: 0,
     fallbackCount: 0,
@@ -279,6 +290,8 @@ export async function runWebSocketMatch(options = {}) {
     run.result = {
       done: true,
       winner: data.winner || null,
+      winnerRole: data.winnerRole
+        || (data.winner === playerNames.p1 ? 'p1' : data.winner === playerNames.p2 ? 'p2' : null),
       turn: data.turn ?? latestTurn(run),
       reason: data.reason || '',
       error: data.error ? sanitizeText(data.error) : '',
@@ -310,14 +323,24 @@ export async function runWebSocketMatch(options = {}) {
   return finishedPromise;
 }
 
-export async function resetBattle({serverOrigin, battleId = DEFAULT_BATTLE_ID, formatid = DEFAULT_FORMAT, seed = null} = {}) {
+export async function resetBattle({serverOrigin, battleId = DEFAULT_BATTLE_ID, formatid = DEFAULT_FORMAT, seed = null, playerNames = undefined} = {}) {
   const response = await fetch(`${serverOrigin}/api/reset`, {
     method: 'POST',
     headers: {'content-type': 'application/json'},
-    body: JSON.stringify({battleId: normalizeBattleId(battleId), formatid, seed}),
+    body: JSON.stringify({battleId: normalizeBattleId(battleId), formatid, seed, playerNames}),
   });
   if (!response.ok) throw new Error(`Reset failed: HTTP ${response.status}`);
   return response.json().catch(() => ({ok: true}));
+}
+
+// "anthropic/claude-sonnet-4.6" → "claude-sonnet-4.6"; stand-ins keep their
+// plain names. Kept short and protocol-safe for the Showdown player field.
+function playerDisplayName(agent = {}) {
+  if (agent.provider === 'standin' || agent.provider === 'heuristic') return agent.provider;
+  const model = String(agent.model || agent.name || 'player');
+  const base = model.includes('/') ? model.split('/').pop() : model;
+  const clean = base.replace(/[|,\n\r]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 22);
+  return clean || 'player';
 }
 
 export async function writeJson(outputPath, payload) {

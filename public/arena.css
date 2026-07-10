@@ -528,6 +528,80 @@ main {
   font-size: 15px;
 }
 
+/* ---------- canonical model picker: provider → model → effort ---------- */
+
+.picker-block {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  text-align: left;
+}
+
+.picker-label {
+  font: 700 11px/1 var(--sans);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.picker-label.p1side::before { content: "●"; color: var(--p1); margin-right: 6px; }
+.picker-label.p2side::before { content: "●"; color: var(--p2); margin-right: 6px; }
+
+/* Provider reads first on its own row; the model — the star — gets the
+   full width of the second row with the effort dial beside it. */
+.picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  min-width: 0;
+}
+
+.picker select { width: 100%; }
+.picker select:first-child { grid-column: 1 / -1; }
+
+.picker select {
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 0;
+  background:
+    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="6"><path d="M1 1l4 4 4-4" stroke="%231c2b4a" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>')
+    no-repeat right 9px center / 10px 6px,
+    var(--card);
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  font: 600 12px/1.2 var(--sans);
+  color: var(--text);
+  padding: 9px 26px 9px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.picker select:focus {
+  outline: none;
+  border-color: var(--poke-yellow);
+  box-shadow: 0 0 0 3px rgba(255, 203, 5, 0.25);
+}
+
+.picker select:disabled { opacity: 0.45; cursor: default; }
+.picker .pick-model { flex: 1; }
+
+.advanced-grid {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.advanced-grid label {
+  flex: 1;
+  min-width: 150px;
+  max-width: none;
+  margin-top: 0;
+}
+
 .setup-advanced {
   margin-top: 14px;
   text-align: left;
@@ -1378,13 +1452,137 @@ body.theater { overflow: hidden; }
 
 body.theater .topbar,
 body.theater .matchup,
-body.theater .winner-banner,
 body.theater .control-dock,
-body.theater .pads,
 body.theater .ticker,
 body.theater .replay-bar,
-body.theater .transport {
+body.theater .transport,
+body.theater .site-footer,
+body.theater .site-disclaimer {
   display: none !important;
+}
+
+/* The intro floats over the idle stage and yields when a battle starts. */
+body.theater .setup-card {
+  position: fixed;
+  left: 50%;
+  top: 48%;
+  transform: translate(-50%, -50%);
+  z-index: 56;
+  width: min(92vw, 780px);
+  max-height: 88vh;
+  overflow-y: auto;
+  margin: 0;
+  box-shadow: 0 34px 90px rgba(0, 0, 0, 0.55);
+  animation: intro-in 560ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+@keyframes intro-in {
+  from { opacity: 0; transform: translate(-50%, -46%) scale(0.96); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+/* The winner takes the marquee, floating over the theater. */
+body.theater .winner-banner {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 57;
+  margin: 0;
+  min-width: min(90vw, 420px);
+  background: linear-gradient(180deg, #ffd94d, var(--poke-yellow));
+  color: var(--ink);
+  border-color: rgba(28, 43, 74, 0.35);
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.5), 0 0 40px rgba(255, 203, 5, 0.3);
+}
+
+/* ---- Model Minds flanking the stage: the thinking is part of the show ---- */
+
+@media (min-width: 1160px) {
+  body.theater .pads { display: contents; }
+
+  body.theater .pad-card {
+    position: fixed;
+    top: 50%;
+    transform: translateY(-50%);
+    width: min(23vw, 380px);
+    max-height: 85vh;
+    overflow-y: auto;
+    z-index: 55;
+    background: rgba(15, 22, 41, 0.94);
+    border: 1px solid rgba(122, 152, 204, 0.22);
+    border-radius: 16px;
+    box-shadow: 0 18px 54px rgba(0, 0, 0, 0.5);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(140, 165, 205, 0.35) transparent;
+  }
+
+  body.theater .pad-card[data-side="p1"] { left: 14px; border-top: 3px solid rgba(227, 53, 13, 0.7); }
+  body.theater .pad-card[data-side="p2"] { right: 14px; border-top: 3px solid rgba(90, 168, 232, 0.75); }
+
+  /* Dark-glass variants of the mind internals. */
+  body.theater .pad-card > header {
+    background: transparent;
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+  }
+
+  body.theater .pad-card .who { color: #e8f0fb; }
+  body.theater .pad-card .role-tag { color: #7e93b8; }
+
+  body.theater .pad-card .action-chip {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.12);
+    color: #a9bcd9;
+  }
+
+  body.theater .pad-card .mind { border-top-color: rgba(255, 255, 255, 0.08); }
+  body.theater .pad-card .mind-head h3 { color: #8fa7cc; }
+  body.theater .pad-card .mind-meta { color: #7e93b8; }
+  body.theater .pad-card .thinking { color: #a9bcd9; }
+
+  body.theater .pad-card .mind-board {
+    background: rgba(255, 255, 255, 0.045);
+    border-color: rgba(255, 255, 255, 0.09);
+  }
+
+  body.theater .pad-card .board-label { color: #9db4d8; }
+  body.theater .pad-card .board-count,
+  body.theater .pad-card .board-empty { color: #7e93b8; }
+  body.theater .pad-card .board-field { color: #a9bcd9; }
+
+  body.theater .pad-card .mon-chip {
+    background: #17233d;
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  body.theater .pad-card .mon-chip .mon-name b { color: #e8f0fb; }
+  body.theater .pad-card .mon-chip .mon-detail { color: #7e93b8; }
+  body.theater .pad-card .mon-hp { background: rgba(255, 255, 255, 0.14); }
+
+  body.theater .pad-card .mind-section {
+    background: #131e36;
+    border-color: rgba(255, 255, 255, 0.09);
+    box-shadow: none;
+  }
+
+  body.theater .pad-card .mind-section h4 { color: #dbe6f5; }
+  body.theater .pad-card .mind-section li { color: #a9bcd9; }
+  body.theater .pad-card .mind-section li.chosen-candidate { color: #ffffff; }
+
+  body.theater .pad-card .mind-raw {
+    background: #101a30;
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+
+  body.theater .pad-card .mind-raw summary { color: #7e93b8; }
+  body.theater .pad-card .mind-raw pre { color: #a9bcd9; }
+
+  body.theater .pad-card .mind-choice { border-top-color: rgba(255, 255, 255, 0.1); }
+  body.theater .pad-card .mind-choice .choice-label { color: #a9bcd9; }
+}
+
+@media (max-width: 1159.98px) {
+  body.theater .pads { display: none !important; }
 }
 
 body.theater .battle-screen {

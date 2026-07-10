@@ -114,7 +114,7 @@ export async function runLadderBatch(options = {}) {
       },
     });
 
-    const winnerSide = winnerToSide(run.result?.winner);
+    const winnerSide = run.result?.winnerRole || winnerToSide(run.result?.winner);
     const winnerAgent = winnerSide ? sideMap[winnerSide] : null;
     const scoreA = winnerAgent === 'a' ? 1 : winnerAgent === 'b' ? 0 : 0.5;
     const ratingUpdate = updateEloPair(eloStore, agentA, agentB, scoreA, {

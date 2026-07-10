@@ -81,15 +81,23 @@
                 <h3>Choose the players</h3>
               </header>
               <div class="setup-grid">
-                <label class="grow">Player 1 agent
-                  <input id="setup-p1" type="text" value="standin" spellcheck="false" list="model-options" autocomplete="off" placeholder="search any model&hellip;">
-                  <div class="preset-row" data-target="setup-p1"></div>
-                </label>
+                <div class="picker-block grow">
+                  <span class="picker-label p1side">Player 1 agent</span>
+                  <div class="picker" data-player="p1">
+                    <select id="pick-provider-p1" aria-label="Player 1 provider"></select>
+                    <select id="pick-model-p1" class="pick-model" aria-label="Player 1 model"></select>
+                    <select id="pick-effort-p1" aria-label="Player 1 reasoning effort"></select>
+                  </div>
+                </div>
                 <span class="setup-vs">vs</span>
-                <label class="grow">Player 2 agent
-                  <input id="setup-p2" type="text" value="standin" spellcheck="false" list="model-options" autocomplete="off" placeholder="search any model&hellip;">
-                  <div class="preset-row" data-target="setup-p2"></div>
-                </label>
+                <div class="picker-block grow">
+                  <span class="picker-label p2side">Player 2 agent</span>
+                  <div class="picker" data-player="p2">
+                    <select id="pick-provider-p2" aria-label="Player 2 provider"></select>
+                    <select id="pick-model-p2" class="pick-model" aria-label="Player 2 model"></select>
+                    <select id="pick-effort-p2" aria-label="Player 2 reasoning effort"></select>
+                  </div>
+                </div>
               </div>
             </li>
 
@@ -101,9 +109,17 @@
               <button class="primary setup-start" id="live-start">Start match</button>
               <details class="setup-advanced">
                 <summary>Advanced</summary>
-                <label class="small">Pace ms
-                  <input id="setup-delay" type="text" value="1400">
-                </label>
+                <div class="advanced-grid">
+                  <label class="small">Pace ms
+                    <input id="setup-delay" type="text" value="1400">
+                  </label>
+                  <label>P1 raw spec
+                    <input id="setup-p1" type="text" value="standin" spellcheck="false" list="model-options" autocomplete="off">
+                  </label>
+                  <label>P2 raw spec
+                    <input id="setup-p2" type="text" value="standin" spellcheck="false" list="model-options" autocomplete="off">
+                  </label>
+                </div>
               </details>
               <div class="dock-note" id="live-note"></div>
             </li>

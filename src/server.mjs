@@ -244,6 +244,9 @@ async function handleResetRequest(req, res) {
     const battle = resetBattle(battleId, {
       formatid: typeof body.formatid === 'string' ? body.formatid : undefined,
       seed: Array.isArray(body.seed) ? body.seed.map(Number).filter(Number.isFinite) : undefined,
+      playerNames: body.playerNames && typeof body.playerNames === 'object'
+        ? {p1: body.playerNames.p1, p2: body.playerNames.p2}
+        : undefined,
     });
     sendJson(res, {ok: true, battleId, formatid: battle.formatid, seed: battle.seed});
   } catch (error) {

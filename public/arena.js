@@ -619,11 +619,21 @@ function registerViewport(viewport) {
   scaleViewport(viewport);
 }
 
+// Theater reserves lateral margins for the two Model Mind columns when the
+// screen is wide enough; the same numbers position the columns in CSS.
+function theaterSideReserve() {
+  if (window.innerWidth < 1160) return 0;
+  return Math.min(window.innerWidth * 0.23, 380) + 28;
+}
+
 function scaleViewport(viewport) {
   if (!viewport.isConnected || !viewport.offsetParent) return;
   if (document.body.classList.contains('theater')) {
-    // Fill the screen with the native client, preserving its aspect ratio.
-    const scale = Math.min(window.innerWidth / CLIENT_BASE_WIDTH, window.innerHeight / CLIENT_BASE_HEIGHT);
+    // Center the native client between the flanking mind columns,
+    // preserving its aspect ratio.
+    const reserve = theaterSideReserve();
+    const availableWidth = Math.max(420, window.innerWidth - reserve * 2);
+    const scale = Math.min(availableWidth / CLIENT_BASE_WIDTH, (window.innerHeight - 16) / CLIENT_BASE_HEIGHT);
     viewport.style.setProperty('--client-scale', String(scale));
     viewport.style.width = `${Math.ceil(CLIENT_BASE_WIDTH * scale)}px`;
     viewport.style.height = `${Math.ceil(CLIENT_BASE_HEIGHT * scale)}px`;
@@ -733,6 +743,7 @@ function updatePipeline(options = {}) {
 function suggestRealModels() {
   if ($('setup-p1').value.trim() === 'standin') $('setup-p1').value = AGENT_PRESETS[1];
   if ($('setup-p2').value.trim() === 'standin') $('setup-p2').value = AGENT_PRESETS[2];
+  for (const player of ROLES) syncPickerFromSpec(player);
 }
 
 /* ---------------- bring-your-own-key ---------------- */
@@ -919,6 +930,7 @@ function theaterOn() {
 
 function setTheater(on) {
   document.body.classList.toggle('theater', on);
+  renderLiveRun();
   $('theater-exit').classList.toggle('hidden', !on);
   $('theater-sound').classList.toggle('hidden', !on);
   if (on && !localStorage.getItem('arena-theater-hinted')) {
@@ -1203,16 +1215,6 @@ function renderLiveRun() {
       : 'Showdown LLM Arena';
   }
 
-  // A brand-new visitor sees only the walk-through card; the console stage
-  // appears with their first battle (and stays from then on).
-  const stageVisible = Boolean(run) || Boolean(localStorage.getItem(HAS_BATTLED_KEY));
-  const stage = $('live-stage');
-  if (stage.classList.contains('hidden') === stageVisible) {
-    stage.classList.toggle('hidden', !stageVisible);
-    $('live-ticker').classList.toggle('hidden', !stageVisible);
-    scaleAllViewports();
-  }
-
   updatePipeline();
   $('live-start').disabled = active;
   $('live-demo').disabled = active;
@@ -1220,7 +1222,10 @@ function renderLiveRun() {
   $('live-resume').disabled = !active || !run.paused;
   $('live-stop').disabled = !active;
   // The setup card is the idle state; during a match the stage is the page.
-  $('live-setup-card').classList.toggle('hidden', active);
+  // In theater the intro greets only a fresh page — once a battle has taken
+  // the stage it never barges back over the final board (the Dashboard
+  // button has the full setup).
+  $('live-setup-card').classList.toggle('hidden', active || (theaterOn() && Boolean(run)));
   $('live-run-controls').classList.toggle('hidden', !active);
 
   const specP1 = run ? run.agentP1 : $('setup-p1').value;
@@ -1289,11 +1294,12 @@ function renderLiveRun() {
 
   const banner = $('live-banner');
   if (run?.result?.done && run.status === 'finished') {
-    // Surface the winner banner and the replay path when the match ends.
-    if (theaterOn() && !$('live-view').classList.contains('hidden') && live.wasActive) setTheater(false);
+    // Surface the winner banner where the viewer already is — the theater
+    // stays up; the Dashboard button has the full post-match detail.
     live.wasActive = false;
     const winner = run.result.winner;
-    const side = winner === 'Benchmark P1' ? 'p1' : winner === 'Benchmark P2' ? 'p2' : null;
+    const side = run.result.winnerRole
+      || (winner === 'Benchmark P1' ? 'p1' : winner === 'Benchmark P2' ? 'p2' : null);
     $('live-plate-p1').classList.toggle('winner', side === 'p1');
     $('live-plate-p2').classList.toggle('winner', side === 'p2');
     banner.textContent = side
@@ -1386,48 +1392,139 @@ $('live-pause').addEventListener('click', () => void liveCommand({command: 'paus
 $('live-resume').addEventListener('click', () => void liveCommand({command: 'resume'}));
 $('live-stop').addEventListener('click', () => void liveCommand({command: 'stop'}));
 
-// Model picker: every structured-output-capable OpenRouter model, straight
-// from the live catalog, typeable/searchable via the shared datalist.
-async function loadModelOptions() {
+/* ---------------- canonical model picker: provider → model → effort ---------------- */
+
+const PROVIDER_LABELS = {
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  google: 'Google',
+  deepseek: 'DeepSeek',
+  'z-ai': 'Z.AI',
+  minimax: 'MiniMax',
+  moonshotai: 'Moonshot AI',
+  qwen: 'Qwen',
+  'x-ai': 'xAI',
+  mistralai: 'Mistral',
+  'meta-llama': 'Meta',
+  amazon: 'Amazon',
+  microsoft: 'Microsoft',
+  nvidia: 'NVIDIA',
+  cohere: 'Cohere',
+  perplexity: 'Perplexity',
+};
+const FEATURED_PROVIDERS = ['openai', 'anthropic', 'google', 'deepseek', 'z-ai', 'minimax', 'moonshotai', 'qwen', 'x-ai', 'mistralai', 'meta-llama'];
+const EFFORTS = ['low', 'medium', 'high'];
+const pickerCatalog = new Map(); // provider slug → [{id, label}]
+
+function providerLabel(slug) {
+  return PROVIDER_LABELS[slug] || slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function catalogModelLabel(model) {
+  const name = model.name || model.id;
+  return name.includes(': ') ? name.split(': ').slice(1).join(': ') : name;
+}
+
+async function loadModelCatalog() {
   try {
     const response = await fetch('/api/models');
     const payload = await response.json();
-    const datalist = $('model-options');
-    datalist.replaceChildren();
-    for (const spec of ['standin', 'heuristic']) {
-      datalist.appendChild(new Option('', spec));
-    }
+    pickerCatalog.clear();
     for (const model of payload.models || []) {
-      const option = document.createElement('option');
-      option.value = `openrouter:${model.id}:low`;
-      option.label = `${model.name} · $${model.promptPricePerM}/M in · $${model.completionPricePerM}/M out`;
-      datalist.appendChild(option);
+      const slug = String(model.id).split('/')[0];
+      if (!pickerCatalog.has(slug)) pickerCatalog.set(slug, []);
+      pickerCatalog.get(slug).push({id: model.id, label: catalogModelLabel(model)});
+    }
+    for (const models of pickerCatalog.values()) {
+      models.sort((a, b) => a.label.localeCompare(b.label));
     }
   } catch {
-    // presets still work without the catalog
+    // built-in players still work without the catalog
   }
+  for (const player of ROLES) buildPicker(player);
 }
-void loadModelOptions();
 
-// Enter in either picker starts the match — the card behaves like a form.
-for (const id of ['setup-p1', 'setup-p2']) {
-  $(id).addEventListener('keydown', event => {
-    if (event.key === 'Enter' && !$('live-start').disabled) $('live-start').click();
+function orderedProviderSlugs() {
+  const rest = [...pickerCatalog.keys()].filter(slug => !FEATURED_PROVIDERS.includes(slug)).sort();
+  return [...FEATURED_PROVIDERS.filter(slug => pickerCatalog.has(slug)), ...rest];
+}
+
+function buildPicker(player) {
+  const providerSelect = $(`pick-provider-${player}`);
+  providerSelect.replaceChildren();
+  providerSelect.appendChild(new Option('Built-in', 'built-in'));
+  for (const slug of orderedProviderSlugs()) {
+    providerSelect.appendChild(new Option(providerLabel(slug), slug));
+  }
+  syncPickerFromSpec(player);
+}
+
+function populatePickerModels(player, providerSlug, selectedId) {
+  const modelSelect = $(`pick-model-${player}`);
+  modelSelect.replaceChildren();
+  if (providerSlug === 'built-in') {
+    modelSelect.appendChild(new Option('standin · free demo player', 'standin'));
+    modelSelect.appendChild(new Option('heuristic', 'heuristic'));
+  } else {
+    for (const model of pickerCatalog.get(providerSlug) || []) {
+      modelSelect.appendChild(new Option(model.label, model.id));
+    }
+  }
+  if (selectedId) modelSelect.value = selectedId;
+  if (!modelSelect.value && modelSelect.options.length) modelSelect.selectedIndex = 0;
+}
+
+function populatePickerEfforts(player, selected) {
+  const effortSelect = $(`pick-effort-${player}`);
+  effortSelect.replaceChildren();
+  for (const effort of EFFORTS) effortSelect.appendChild(new Option(effort, effort));
+  effortSelect.value = EFFORTS.includes(selected) ? selected : 'low';
+  effortSelect.disabled = $(`pick-provider-${player}`).value === 'built-in';
+}
+
+function applyPickerToSpec(player) {
+  const provider = $(`pick-provider-${player}`).value;
+  const model = $(`pick-model-${player}`).value;
+  const effort = $(`pick-effort-${player}`).value || 'low';
+  $(`setup-${player}`).value = provider === 'built-in' ? (model || 'standin') : `openrouter:${model}:${effort}`;
+  renderLiveRun();
+}
+
+// The raw spec input stays authoritative (Advanced can edit it directly);
+// the picker mirrors it.
+function syncPickerFromSpec(player) {
+  const spec = $(`setup-${player}`).value.trim();
+  const providerSelect = $(`pick-provider-${player}`);
+  if (!spec.startsWith('openrouter:')) {
+    providerSelect.value = 'built-in';
+    populatePickerModels(player, 'built-in', spec === 'heuristic' ? 'heuristic' : 'standin');
+    populatePickerEfforts(player, 'low');
+    return;
+  }
+  const parts = spec.split(':');
+  const effort = parts.length > 2 && EFFORTS.includes(parts.at(-1)) ? parts.pop() : 'low';
+  const modelId = parts.slice(1).join(':');
+  const slug = modelId.split('/')[0];
+  providerSelect.value = pickerCatalog.has(slug) ? slug : 'built-in';
+  populatePickerModels(player, providerSelect.value, modelId);
+  populatePickerEfforts(player, effort);
+}
+
+for (const player of ROLES) {
+  $(`pick-provider-${player}`).addEventListener('change', () => {
+    populatePickerModels(player, $(`pick-provider-${player}`).value);
+    populatePickerEfforts(player, $(`pick-effort-${player}`).value);
+    applyPickerToSpec(player);
+  });
+  $(`pick-model-${player}`).addEventListener('change', () => applyPickerToSpec(player));
+  $(`pick-effort-${player}`).addEventListener('change', () => applyPickerToSpec(player));
+  $(`setup-${player}`).addEventListener('change', () => {
+    syncPickerFromSpec(player);
+    renderLiveRun();
   });
 }
 
-for (const row of document.querySelectorAll('.preset-row')) {
-  const target = row.dataset.target;
-  for (const preset of AGENT_PRESETS) {
-    const button = el('button', '', preset);
-    button.type = 'button';
-    button.addEventListener('click', () => {
-      $(target).value = preset;
-      renderLiveRun();
-    });
-    row.appendChild(button);
-  }
-}
+void loadModelCatalog();
 
 /* ================================================================
    REPLAY
@@ -1836,8 +1933,8 @@ const replayUI = {
     card.dataset.href = replay.href;
 
     const match = el('div', 'rc-match');
-    const p1Won = replay.result?.winner === 'Benchmark P1';
-    const p2Won = replay.result?.winner === 'Benchmark P2';
+    const p1Won = replay.result?.winnerRole === 'p1' || replay.result?.winner === 'Benchmark P1';
+    const p2Won = replay.result?.winnerRole === 'p2' || replay.result?.winner === 'Benchmark P2';
     const name1 = el('span', `rc-name p1${p1Won ? ' won' : ''}`, shortName(replay.agents?.p1));
     const name2 = el('span', `rc-name p2${p2Won ? ' won' : ''}`, shortName(replay.agents?.p2));
     match.appendChild(name1);
@@ -1988,7 +2085,10 @@ const replayUI = {
 
   onMatchEnd(winner, turn) {
     const artifact = this.engine?.artifact;
-    const side = winner === 'Benchmark P1' ? 'p1' : winner === 'Benchmark P2' ? 'p2' : null;
+    const names = artifact?.playerNames || {};
+    const side = winner === names.p1 ? 'p1'
+      : winner === names.p2 ? 'p2'
+      : winner === 'Benchmark P1' ? 'p1' : winner === 'Benchmark P2' ? 'p2' : null;
     $('replay-plate-p1').classList.toggle('winner', side === 'p1');
     $('replay-plate-p2').classList.toggle('winner', side === 'p2');
     const banner = $('replay-banner');
@@ -2089,10 +2189,9 @@ for (const role of ROLES) {
 
 replayUI.setTransportEnabled(false);
 updatePipeline();
-if (!localStorage.getItem(HAS_BATTLED_KEY)) {
-  $('live-stage').classList.add('hidden');
-  $('live-ticker').classList.add('hidden');
-}
+// The navy theater is the site: client centered, minds flanking, the intro
+// card floating above until a battle takes the stage.
+setTheater(true);
 void restoreKeyPanel();
 applySound();
 connectSpectatorSocket();

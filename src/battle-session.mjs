@@ -24,10 +24,24 @@ const {BattleStream, getPlayerStreams, Teams} = require(showdownRoot);
 
 const PLAYER_IDS = ['p1', 'p2'];
 
+export function sanitizePlayerName(value = '') {
+  return String(value || '')
+    .replace(/[|,\n\r]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 22);
+}
+
 export class BattleSession {
   constructor(options = {}) {
     this.formatid = options.formatid || process.env.FORMATID || 'gen9randomdoublesbattle';
     this.seed = options.seed || makeSeed();
+    // Display names for the two seats — the arena passes the chosen model
+    // names so the native client shows who is actually playing.
+    this.playerNames = {
+      p1: sanitizePlayerName(options.playerNames?.p1) || 'Benchmark P1',
+      p2: sanitizePlayerName(options.playerNames?.p2) || 'Benchmark P2',
+    };
     this.teamSeeds = options.teamSeeds || {
       p1: deriveSeed(this.seed, 101),
       p2: deriveSeed(this.seed, 202),
@@ -50,6 +64,7 @@ export class BattleSession {
     this.public = {
       formatid: this.formatid,
       seed: this.seed,
+      playerNames: this.playerNames,
       turn: 0,
       winner: null,
       ended: false,
@@ -90,8 +105,8 @@ export class BattleSession {
       formatid: this.formatid,
       seed: this.seed,
     };
-    const p1 = {name: 'Benchmark P1', team: this.packedTeams.p1};
-    const p2 = {name: 'Benchmark P2', team: this.packedTeams.p2};
+    const p1 = {name: this.playerNames.p1, team: this.packedTeams.p1};
+    const p2 = {name: this.playerNames.p2, team: this.packedTeams.p2};
     void this.streams.omniscient.write(
       `>start ${JSON.stringify(start)}\n` +
       `>player p1 ${JSON.stringify(p1)}\n` +
@@ -164,7 +179,7 @@ export class BattleSession {
       } else if (tag === 'win') {
         this.public.winner = parts[1] || null;
         this.public.ended = true;
-        this.emit({type: 'end', data: {winner: this.public.winner, turn: this.public.turn}});
+        this.emit({type: 'end', data: {winner: this.public.winner, winnerRole: this.winnerRole(), turn: this.public.turn}});
       }
     }
   }
@@ -237,6 +252,13 @@ export class BattleSession {
     if (!choice) return null;
     this.choose(role, choice.choice);
     return choice;
+  }
+
+  winnerRole() {
+    if (!this.public.winner) return null;
+    if (this.public.winner === this.playerNames.p1) return 'p1';
+    if (this.public.winner === this.playerNames.p2) return 'p2';
+    return null;
   }
 
   extractState(role) {
