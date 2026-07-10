@@ -352,10 +352,14 @@
         document.documentElement.scrollTop = 0;
         document.body.scrollTop = 0;
       }
+      // The deck starts exactly where the battle field ends — measured, so
+      // the seam is real, not assumed.
+      var battle = document.querySelector('.battle');
       var controls = document.querySelector('.battle-controls');
-      if (!controls) return;
-      var top = Math.round(controls.getBoundingClientRect().top);
-      if (top > 100 && top < 760 && Math.abs(top - lastReportedTop) > 2) {
+      var edge = battle ? battle.getBoundingClientRect().bottom
+        : controls ? controls.getBoundingClientRect().top : 0;
+      var top = Math.round(edge);
+      if (top > 100 && top < 700 && Math.abs(top - lastReportedTop) > 2) {
         lastReportedTop = top;
         notifyParent({type: 'sd-controls-top', top: top});
       }

@@ -120,6 +120,17 @@ body[data-hide-controls="1"] .battle-controls {
   visibility: hidden !important;
 }
 
+/* Reclaim the client's reserved chrome in deck mode: the room offsets
+   itself 56px for a tab bar we never render, and the log reserves 40px for
+   a chat input we hide. Field and transcript fill the full glass. */
+body[data-hide-controls="1"] .ps-room {
+  top: 0 !important;
+}
+
+body[data-hide-controls="1"] .battle-log {
+  bottom: 0 !important;
+}
+
 /* Controls-only frames render just the real native control bar (move/switch
    buttons). The Showdown client renders its room into a .ps-room appended to
    <body> (the #battle-root div is left empty), with the field and controls

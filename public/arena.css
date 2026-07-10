@@ -961,12 +961,12 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
 .controls-overlay {
   position: absolute;
   left: 0;
-  /* --deck-top is MEASURED from the live client (the adapter reports where
-     .battle-controls actually begins); 370px is only the pre-measurement
+  /* --deck-top is MEASURED from the live client (the adapter reports the
+     battle field's bottom edge); 361px is only the pre-measurement
      fallback. The deck fills from that seam to the client's bottom edge. */
-  top: calc(var(--client-scale, 1) * var(--deck-top, 370px));
+  top: calc(var(--client-scale, 1) * var(--deck-top, 361px));
   width: calc(var(--client-scale, 1) * 640px);
-  height: calc(var(--client-scale, 1) * (760px - var(--deck-top, 370px)));
+  height: calc(var(--client-scale, 1) * (760px - var(--deck-top, 361px)));
   overflow: hidden;
   z-index: 5;
   transition: opacity 160ms ease;
@@ -997,22 +997,32 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
 
 .deck-host .deck {
   width: 640px;
-  height: calc(760px - var(--deck-top, 370px));
+  height: calc(760px - var(--deck-top, 361px));
   transform: scale(var(--client-scale, 1));
   transform-origin: top left;
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px 12px;
-  background: linear-gradient(180deg, #1a2740, #141f38);
-  border-top: 3px solid rgba(255, 203, 5, 0.3);
+  gap: 9px;
+  padding: 13px 14px 12px;
+  background: linear-gradient(180deg, #1a2740, #131d34);
   font-family: var(--sans);
   overflow: hidden;
 }
 
-.deck-host[data-side="p1"] .deck { border-top-color: rgba(227, 53, 13, 0.75); }
-.deck-host[data-side="p2"] .deck { border-top-color: rgba(90, 168, 232, 0.8); }
+/* The seam: a thin lit line in the acting player's color, glowing into the
+   deck instead of a hard border. */
+.deck-host .deck::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--deck-accent, rgba(255, 203, 5, 0.8)), transparent);
+  box-shadow: 0 2px 14px 1px var(--deck-accent, rgba(255, 203, 5, 0.35));
+}
+
+.deck-host[data-side="p1"] .deck { --deck-accent: rgba(227, 53, 13, 0.85); }
+.deck-host[data-side="p2"] .deck { --deck-accent: rgba(90, 168, 232, 0.9); }
 
 .deck-waiting {
   flex: 1;
@@ -1100,7 +1110,9 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
 .deck-moves {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px;
+  grid-auto-rows: minmax(56px, 92px);
+  align-content: start;
+  gap: 7px;
   flex: 1;
   min-height: 0;
 }
