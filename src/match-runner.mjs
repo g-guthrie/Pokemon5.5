@@ -117,9 +117,29 @@ export async function runWebSocketMatch(options = {}) {
     finishResolve = resolve;
     finishReject = reject;
   });
-  const timeout = setTimeout(() => {
+  // The match clock never runs while the viewer has the run paused: a single
+  // monitor loop (not the per-client waiters, which would double-count)
+  // measures each pause and pushes the deadline out by exactly that long.
+  let matchDeadline = Date.now() + timeoutMs;
+  let timeout = setTimeout(onMatchTimeout, timeoutMs);
+  function onMatchTimeout() {
+    const remaining = matchDeadline - Date.now();
+    if (remaining > 250) {
+      timeout = setTimeout(onMatchTimeout, remaining);
+      return;
+    }
     void finish({winner: null, turn: latestTurn(run), reason: `TIMEOUT_MS=${timeoutMs}`});
-  }, timeoutMs);
+  }
+  if (waitIfPaused) {
+    void (async () => {
+      while (!finished) {
+        const pausedAt = Date.now();
+        await waitIfPaused({role: 'match-clock'});
+        matchDeadline += Date.now() - pausedAt;
+        await new Promise(resolve => setTimeout(resolve, 400));
+      }
+    })();
+  }
   if (signal) {
     if (signal.aborted) {
       setTimeout(() => abortRun(), 0);

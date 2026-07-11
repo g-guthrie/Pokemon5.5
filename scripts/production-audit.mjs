@@ -229,8 +229,8 @@ function auditHiddenInfo() {
 function auditPromptPipeline() {
   const calls = providerArtifact?.modelCalls || [];
   const promptOk = calls.length > 0 && calls.every(call =>
-    call.promptSchemaVersion === 'showdown-choice-prompt.v7' &&
-    call.responseSchemaVersion === 'showdown-choice-response.v6' &&
+    call.promptSchemaVersion === 'showdown-choice-prompt.v9' &&
+    call.responseSchemaVersion === 'showdown-choice-response.v9' &&
     call.prompt &&
     call.rawText &&
     call.analysisComplete === true &&

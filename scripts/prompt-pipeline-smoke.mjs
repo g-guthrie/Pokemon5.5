@@ -1,6 +1,8 @@
 import {
   PROMPT_SCHEMA_VERSION,
   REQUIRED_ANALYSIS_FIELDS,
+  TURN_ANALYSIS_FIELDS,
+  REPLACEMENT_ANALYSIS_FIELDS,
   RESPONSE_SCHEMA_VERSION,
   buildChoicePrompt,
   buildChoiceResponseJsonSchema,
@@ -85,7 +87,7 @@ assert(input.promptSchemaVersion === PROMPT_SCHEMA_VERSION, 'wrong prompt schema
 assert(input.responseSchemaVersion === RESPONSE_SCHEMA_VERSION, 'wrong response schema version');
 assert(responseFormat.type === 'json_schema' && responseFormat.strict === true, 'OpenAI response format should use strict JSON schema');
 assert(responseSchema.additionalProperties === false, 'response schema should reject extra keys');
-assert(JSON.stringify(responseSchema.required) === JSON.stringify([...REQUIRED_ANALYSIS_FIELDS, 'choice', 'reason']), 'response schema should require analysis and choice');
+assert(JSON.stringify(responseSchema.required) === JSON.stringify([...TURN_ANALYSIS_FIELDS, 'choice', 'reason']), 'turn response schema should require the turn analysis fields and choice');
 assert(responseSchema.properties.choice.enum.includes('switch 3, move 2 1'), 'response schema should constrain exact legal choices');
 assert(input.screenObservation.opponentRole === 'p2', 'opponent role missing');
 assert(input.screenObservation.self.team[0].item === 'Choice Specs', 'own item missing');
@@ -102,7 +104,7 @@ assert(input.battleBriefing.ownSide.bench.some(mon => mon.species === 'Flutter M
 assert(input.battleBriefing.opponentSide.active[1].movesRevealed.includes('Spore'), 'briefing missing revealed opponent move');
 assert(input.battleBriefing.opponentSide.unrevealedBenchKnown === false, 'briefing should mark opponent bench hidden');
 assert(input.battleBriefing.knownUnknowns.opponentBench.includes('unknown'), 'briefing missing hidden opponent bench policy');
-assert(JSON.stringify(input.responseOrder) === JSON.stringify([...REQUIRED_ANALYSIS_FIELDS, 'choice', 'reason']), 'response order should force analysis before choice');
+assert(JSON.stringify(input.responseOrder) === JSON.stringify([...TURN_ANALYSIS_FIELDS, 'choice', 'reason']), 'turn response order should force analysis before choice');
 assert(input.legalActions.includes('switch 3, move 2 1'), 'switch legal action missing');
 assert(input.legalActions.every(action => typeof action === 'string'), 'legal actions should be exact choice strings');
 assert(input.legalActionPartCatalog.some(part => part.choice === 'switch 3' && part.pokemon === 'Flutter Mane'), 'part catalog missing switch details');
@@ -131,14 +133,16 @@ for (const needle of [
   PROMPT_SCHEMA_VERSION,
   RESPONSE_SCHEMA_VERSION,
   'gameStateSummary',
-  'winConditions',
-  'setupLines',
-  'sweepPlans',
-  'safeSwitches',
+  'setArchetypes',
+  'unknownInformation',
   'opponentLikelyPlan',
   'biggestThreats',
-  'riskAssessment',
+  'winConditions',
+  'loseConditions',
+  'teraAndSwitchCheck',
   'candidateChoices',
+  'candidateOutcomes',
+  'decisionCheck',
   'battleBriefing',
   'playerViewNow',
   'visibleBoard',
@@ -164,12 +168,12 @@ assert(prompt.length < 45000, 'synthetic prompt should stay bounded');
 const analysis = normalizeDecisionAnalysis({
   gameStateSummary: ['Electric Terrain favors Miraidon.'],
   winConditions: ['Use Miraidon pressure to open a Flutter Mane cleanup.'],
-  setupLines: ['No slow setup needed.'],
-  sweepPlans: ['Pressure Amoonguss before Spore.'],
-  safeSwitches: ['Flutter Mane can pivot in if Miraidon is threatened.'],
+  setArchetypes: ['Amoonguss reads as bulky redirection support.'],
+  unknownInformation: ['Arcanine item and fourth move are unrevealed.'],
   opponentLikelyPlan: ['Amoonguss likely uses Rage Powder or Spore.'],
   biggestThreats: ['Spore disruption.'],
-  riskAssessment: ['Snarl can reduce damage output.'],
+  candidateOutcomes: ['Into Rage Powder, the double-up still removes Amoonguss.'],
+  decisionCheck: ['Snarl can reduce damage output but the line stays robust.'],
   candidateChoices: [
     'move 1 1, move 1 2: pressures Arcanine and disrupts Amoonguss; risks redirection.',
     'switch 3, move 2 1: preserves Miraidon while Parting Shot lowers Arcanine; risks losing tempo.',
@@ -180,7 +184,8 @@ const analysis = normalizeDecisionAnalysis({
 assert(analysis.gameStateSummary.length === 1, 'analysis summary missing');
 assert(analysis.winConditions[0].includes('Miraidon'), 'win condition missing');
 assert(analysis.opponentLikelyPlan[0].includes('Amoonguss'), 'opponent plan missing');
-assert(analysis.riskAssessment[0].includes('Snarl'), 'risk assessment missing');
+assert(analysis.decisionCheck[0].includes('Snarl'), 'decision check missing');
+assert(analysis.setArchetypes[0].includes('Amoonguss'), 'set archetypes missing');
 assert(analysis.candidateChoices.length === 2, 'candidate choice review missing');
 
 console.log(JSON.stringify({

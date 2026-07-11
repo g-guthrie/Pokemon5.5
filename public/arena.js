@@ -231,9 +231,19 @@ function modelMindData(call = {}, action = null, observation = null, turn = null
 
 // Per-slot names so the mind can translate protocol tokens wherever they
 // appear — including inside the model's own candidate lines ("move 3 2" →
-// "Tailwind → foe 2"). Built from the exact request observation.
+// "Tailwind on Venusaur"). Built from the exact request observation. foes and
+// allies map active slots to the Pokémon standing in them, so targets render
+// as names, never numbers.
 function actionNamesFromObservation(observation) {
-  const names = {moves: {}, switches: {}};
+  const names = {moves: {}, switches: {}, foes: {}, allies: {}};
+  for (const [index, mon] of (observation?.self?.activePokemon || []).entries()) {
+    const slot = Number(mon.activeSlot) || index + 1;
+    names.allies[slot] = mon.name || mon.species || '';
+  }
+  for (const [index, mon] of (observation?.opponent?.activePokemon || []).entries()) {
+    const slot = Number(mon.activeSlot) || index + 1;
+    names.foes[slot] = mon.name || mon.species || '';
+  }
   for (const action of observation?.legalActions || []) {
     for (const part of action.choices || [action]) {
       const tokens = String(part.choice || '').trim().split(/\s+/);
@@ -253,11 +263,12 @@ function actionNamesFromObservation(observation) {
 }
 
 // "move 3 2, move 4 1" is protocol, not television: translate a choice into
-// the move/Pokémon names the viewer just watched get pressed. Parts are
-// positional in doubles (first part = active 1). All-or-nothing: if ANY move
-// or switch part fails to resolve to a real name, return '' so callers fall
-// back to the server's fully-English label — a chip must never mix "move 2"
-// protocol with human words. The raw string stays in tooltips and artifacts.
+// the sentence a caster would say — "Charizard: Flamethrower on Venusaur".
+// Parts are positional in doubles (first part = active 1). All-or-nothing: if
+// ANY move or switch part fails to resolve to a real name, return '' so
+// callers fall back to the server's fully-English label — a chip must never
+// mix "move 2" protocol with human words. The raw string stays in tooltips
+// and artifacts.
 function choiceLabel(choice, observation) {
   if (!observation) return '';
   const names = actionNamesFromObservation(observation);
@@ -272,9 +283,16 @@ function choiceLabel(choice, observation) {
       const slot = tokens[1];
       const name = names.moves[`${active}:${slot}`] || names.moves[`1:${slot}`] || names.moves[`2:${slot}`];
       if (name) {
+        const actor = names.allies[active] ? `${names.allies[active]}: ` : '';
         const target = tokens.slice(2).find(token => /^-?\d$/.test(token));
-        const suffix = target ? (Number(target) > 0 ? ` → foe ${target}` : ' → ally') : '';
-        return name + (part.includes('terastallize') ? ' ⭐Tera' : '') + suffix;
+        let suffix = '';
+        if (target) {
+          const targetSlot = Math.abs(Number(target));
+          suffix = Number(target) > 0
+            ? (names.foes[targetSlot] ? ` on ${names.foes[targetSlot]}` : ' on the foe')
+            : (names.allies[targetSlot] ? ` on ally ${names.allies[targetSlot]}` : ' on an ally');
+        }
+        return actor + name + (part.includes('terastallize') ? ' ⭐Tera' : '') + suffix;
       }
       failed = true;
       return part;
@@ -1049,6 +1067,7 @@ function renderKeyPanel(state, facts = {}) {
     factsEl.appendChild(label);
     if (facts.balance != null) {
       factsEl.appendChild(el('span', 'key-balance', ` · $${facts.balance.toFixed(2)} credits`));
+      creditTicker.balance = facts.balance;
     }
     status.appendChild(factsEl);
     const change = el('button', 'key-change', 'change / log out');
@@ -1066,10 +1085,12 @@ function renderKeyPanel(state, facts = {}) {
       updatePipeline({animate: true});
       renderLiveRun();
     }
+    renderCreditTicker();
     return;
   }
   keyValid = false;
   updatePipeline();
+  renderCreditTicker();
   if (state === 'invalid') {
     entry.classList.remove('hidden');
     status.classList.remove('hidden');
@@ -1184,6 +1205,50 @@ async function restoreKeyPanel() {
     if (validationVersion !== keyValidationVersion) return;
     renderKeyPanel('valid', {}); // offline: trust the stored key for now
   }
+}
+
+/* ---------------- credits ticker ---------------- */
+
+// Permanent footer readout of the visitor's remaining OpenRouter balance.
+// Refreshed from the key panel's validation facts and re-polled as turns
+// burn credits; hard-throttled so fast games never spam the provider.
+const creditTicker = {balance: null, lastFetch: 0, marker: '', inFlight: false};
+
+function renderCreditTicker() {
+  const el = $('credit-ticker');
+  if (!el) return;
+  if (creditTicker.balance == null || !storedKey() || !keyValid) {
+    el.classList.add('hidden');
+    return;
+  }
+  el.classList.remove('hidden');
+  el.classList.toggle('credit-low', creditTicker.balance < 1);
+  el.textContent = `openrouter $${creditTicker.balance.toFixed(2)}`;
+  el.title = `Your remaining OpenRouter credits: $${creditTicker.balance.toFixed(4)}`;
+}
+
+async function refreshCredits() {
+  if (!storedKey() || !keyValid) {
+    renderCreditTicker();
+    return;
+  }
+  const now = Date.now();
+  if (creditTicker.inFlight || now - creditTicker.lastFetch < 8000) return;
+  creditTicker.inFlight = true;
+  creditTicker.lastFetch = now;
+  try {
+    const response = await fetch('/api/credits', {
+      method: 'POST',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify({openrouterKey: storedKey()}),
+    });
+    const payload = await response.json();
+    if (payload.ok && payload.balance != null) creditTicker.balance = payload.balance;
+  } catch {
+    // keep the last known balance; the next turn retries
+  }
+  creditTicker.inFlight = false;
+  renderCreditTicker();
 }
 
 /* ---------------- battle sound ---------------- */
@@ -1854,6 +1919,16 @@ async function pollLiveRun() {
     if (epoch !== liveStateEpoch) return;
     live.run = payload.run || null;
     renderLiveRun();
+    // Balance ticks along with the game: re-poll credits whenever a paid
+    // run advances a turn, changes game, or ends (refreshCredits throttles).
+    const run = live.run;
+    if (run && `${run.agentP1} ${run.agentP2}`.includes('openrouter:')) {
+      const marker = `${run.id}|${run.currentGame}|${run.currentTurn}|${run.status}`;
+      if (creditTicker.marker !== marker) {
+        creditTicker.marker = marker;
+        void refreshCredits();
+      }
+    }
   } catch {
     // keep last known state
   } finally {
@@ -2021,10 +2096,19 @@ function renderLiveRun() {
     const key = latest ? String(latest.callIndex ?? `${latest.at}|${latest.choice}|${latest.error || ''}`) : '';
     if (key && key !== live.lastCallKey[role]) {
       live.lastCallKey[role] = key;
-      const action = (run?.lastActions || []).filter(a => a.role === role).at(-1);
-      const requestObservation = action?.requestId != null
-        ? live.requests[role].get(Number(action.requestId)) || null
-        : null;
+      // The mind reveals BEFORE the press dispatches, so the action record
+      // for THIS call usually doesn't exist yet — only use an action that
+      // provably belongs to this call, or its label/request would be the
+      // previous turn's and the mind would fall back to raw protocol tokens.
+      const lastAction = (run?.lastActions || []).filter(a => a.role === role).at(-1);
+      const action = lastAction && lastAction.callIndex === latest.callIndex ? lastAction : null;
+      // The request being decided is still the latest one; prefer the keyed
+      // ACTIONABLE snapshot (a post-choice rebroadcast arrives consumed with
+      // empty legalActions and would leave the name maps empty).
+      const requestObservation = (action?.requestId != null ? live.requests[role].get(Number(action.requestId)) : null)
+        || (live.latestRequest[role]?.requestId != null ? live.requests[role].get(Number(live.latestRequest[role].requestId)) : null)
+        || live.latestRequest[role]
+        || null;
       const mindData = modelMindData(latest, action, requestObservation, run?.currentTurn);
       const mindOptions = {title: 'Model mind', animate: true};
       if (humanRole && role !== humanRole) mindOptions.peek = {on: true, role};

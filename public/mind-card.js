@@ -4,18 +4,29 @@
 // answered card revealing in schema order, with the final choice landing
 // last. Plain script: exposes window.ArenaMind.
 (function () {
-  // The ten analysis questions, in the response schema's required order.
+  // The analysis questions, in the response schema's required order — the v9
+  // reasoning arc: read the board, appraise the revealed sets, fence off the
+  // unknowns, predict the opponent, name the threats and the stakes, weigh
+  // Tera and switches, shortlist candidates, project each line, then check
+  // the pick's robustness right before the choice lands. The last three
+  // sections are the focused replacement mind (a fainted Pokemon's send-in
+  // decision); a call answers either the turn set or the replacement set, so
+  // only the relevant cards render.
   var ANALYSIS_SECTIONS = [
-    ['gameStateSummary', '\u{1F9ED}', 'What is the state of the game?'],
-    ['winConditions', '\u{1F3C6}', 'How do we win?'],
-    ['loseConditions', '⚠️', 'How could we lose?'],
-    ['setupLines', '\u{1F4C8}', 'What setups are promising?'],
-    ['sweepPlans', '\u{1F4A5}', 'What could sweep?'],
-    ['safeSwitches', '\u{1F501}', 'Safe pivots?'],
+    ['gameStateSummary', '\u{1F9ED}', 'What is the state of the board?'],
+    ['setArchetypes', '\u{1F9EC}', 'What sets are they running?'],
+    ['unknownInformation', '\u{1F311}', 'What is still unknown?'],
     ['opponentLikelyPlan', '\u{1F52E}', 'What is their plan?'],
     ['biggestThreats', '\u{1F3AF}', 'Biggest threats right now?'],
-    ['riskAssessment', '\u{1F3B2}', 'What is the risk?'],
+    ['winConditions', '\u{1F3C6}', 'How do we win?'],
+    ['loseConditions', '⚠️', 'How could we lose?'],
+    ['teraAndSwitchCheck', '⭐', 'Should anyone Tera or switch?'],
     ['candidateChoices', '⚖️', 'Candidate moves compared'],
+    ['candidateOutcomes', '\u{1F3AC}', 'How does each line play out?'],
+    ['decisionCheck', '✅', 'Why this action?'],
+    ['replacementMatchups', '\u{1F501}', 'Who matches up best?'],
+    ['replacementRisks', '\u{1F573}\u{FE0F}', 'What could each send-in cost?'],
+    ['replacementPlan', '\u{1F9E9}', 'What is the plan after the swap?'],
   ];
 
   // Reveal pacing (ms). Kept in one place because the parent page mirrors
@@ -65,28 +76,56 @@
   }
 
   // Protocol tokens are unintelligible to humans; wherever the model wrote
-  // "move 3 2" or "switch 4" in its own analysis, show the real move and
-  // Pokémon names from the request it was answering. Positional heuristic
-  // for doubles: the first move token in a line belongs to active 1, the
-  // second to active 2.
+  // "move 3 2", "switch 4", "foe 1", or "Active 2" in its own analysis or
+  // raw answer, show the real move and Pokémon names from the request it was
+  // answering. The Model Mind is entirely for human consumption — no move or
+  // target ever renders as a number (raw strings live on in tooltips and
+  // artifacts). Positional heuristic for doubles: within one choice segment
+  // the first move token belongs to active 1, the second to active 2;
+  // segments reset at newlines and JSON string boundaries so long raw
+  // answers do not drift onto the wrong active slot.
   function translateChoiceTokens(text, names) {
     if (!names || (!names.moves && !names.switches)) return String(text);
     var moves = names.moves || {};
     var switches = names.switches || {};
-    var moveIndex = 0;
-    return String(text)
-      .replace(/\bmove\s+(\d)(?:\s+(-?\d))?(\s+terastallize)?\b/gi, function (match, slot, target, tera) {
-        moveIndex += 1;
-        var active = Math.min(moveIndex, 2);
-        var name = moves[active + ':' + slot] || moves['1:' + slot] || moves['2:' + slot];
-        if (!name) return match;
-        var suffix = '';
-        if (target) suffix = Number(target) > 0 ? ' → foe ' + target : ' → ally';
-        return name + (tera ? ' ⭐Tera' : '') + suffix;
-      })
-      .replace(/\bswitch\s+(\d)\b/gi, function (match, slot) {
-        return switches[slot] ? 'switch → ' + switches[slot] : match;
-      });
+    var foes = names.foes || {};
+    var allies = names.allies || {};
+
+    function targetPhrase(target) {
+      if (!target) return '';
+      var slot = Math.abs(Number(target));
+      if (Number(target) > 0) return foes[slot] ? ' on ' + foes[slot] : ' on the foe';
+      return allies[slot] ? ' on ally ' + allies[slot] : ' on an ally';
+    }
+
+    function translateSegment(segment) {
+      var moveIndex = 0;
+      return segment
+        .replace(/\bmove\s+(\d)(?:\s+(-?\d))?(\s+terastallize)?\b/gi, function (match, slot, target, tera) {
+          moveIndex += 1;
+          var active = Math.min(moveIndex, 2);
+          var name = moves[active + ':' + slot] || moves['1:' + slot] || moves['2:' + slot];
+          if (!name) return match;
+          return name + (tera ? ' ⭐Tera' : '') + targetPhrase(target);
+        })
+        .replace(/\bswitch\s+(\d)\b/gi, function (match, slot) {
+          return switches[slot] ? 'switch → ' + switches[slot] : match;
+        })
+        // Server-built labels and model prose both say "→ foe 1" / "Active 2:";
+        // swap in the real names whenever the slot is known.
+        .replace(/(→\s*)?\bfoe\s+([12])\b/gi, function (match, arrow, slot) {
+          if (!foes[slot]) return match;
+          return arrow ? 'on ' + foes[slot] : foes[slot];
+        })
+        .replace(/\bActive\s+([12])(:\s*)?/gi, function (match, slot, colon) {
+          if (!allies[slot]) return match;
+          return allies[slot] + (colon ? ': ' : '');
+        });
+    }
+
+    return String(text).split(/(\n|",\s*")/).map(function (piece, index) {
+      return index % 2 === 1 ? piece : translateSegment(piece);
+    }).join('');
   }
 
   // Every answered question shows, in schema order — the column scrolls.
@@ -169,7 +208,7 @@
         // Chosen-candidate matching runs on the raw text; the display text
         // gets its protocol tokens translated to real names wherever the
         // model wrote them.
-        var chosen = key === 'candidateChoices' && data.choice && item.indexOf(data.choice) === 0;
+        var chosen = (key === 'candidateChoices' || key === 'replacementMatchups') && data.choice && item.indexOf(data.choice) === 0;
         var display = translateChoiceTokens(item, data.actionNames);
         var li = el('li', '', chosen ? '▸ ' + display : display);
         if (chosen) li.classList.add('chosen-candidate');
@@ -181,14 +220,17 @@
     }
     if (sections.children.length) container.appendChild(sections);
 
-    if (data.rawText) {
+    if (data.rawText && String(data.rawText).trim()) {
       var details = document.createElement('details');
       details.className = 'mind-raw mind-raw-answer';
       var summary = document.createElement('summary');
       summary.textContent = 'Raw model answer';
       details.appendChild(summary);
       var pre = document.createElement('pre');
-      pre.textContent = String(data.rawText);
+      // Even the raw answer reads in human names — "Flamethrower on
+      // Venusaur", never "move 3 1". The byte-exact output stays in the
+      // artifact for auditing.
+      pre.textContent = translateChoiceTokens(String(data.rawText), data.actionNames);
       details.appendChild(pre);
       container.appendChild(details);
     }
@@ -211,7 +253,7 @@
       if (data.choice) chip.title = data.choice;
       footer.appendChild(chip);
     }
-    if (data.reason) footer.appendChild(el('span', 'choice-label', data.reason));
+    if (data.reason) footer.appendChild(el('span', 'choice-label', translateChoiceTokens(data.reason, data.actionNames)));
     if (data.valid === false) footer.appendChild(el('span', 'invalid', 'invalid choice'));
     if (data.fallback) footer.appendChild(el('span', 'invalid', 'fallback'));
     if (footer.children.length) {

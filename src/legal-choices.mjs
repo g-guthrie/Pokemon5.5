@@ -62,9 +62,23 @@ function getForceSwitchActions(request) {
 }
 
 function countSwitchableBench(request) {
-  return (request.side?.pokemon || [])
+  const pokemon = request.side?.pokemon || [];
+  // Revival Blessing: the "switch" pool is the FAINTED Pokemon, not the
+  // healthy bench (see isRevivalRequest).
+  if (isRevivalRequest(request)) {
+    return pokemon.filter(mon => mon && String(mon.condition || '').endsWith(' fnt')).length;
+  }
+  return pokemon
     .filter(mon => mon && !mon.active && !String(mon.condition || '').endsWith(' fnt'))
     .length;
+}
+
+// After Revival Blessing resolves, the side gets a force-switch request whose
+// active entry carries `reviving: true`; the choice must select a FAINTED
+// Pokemon (any slot — the simulator even allows a fainted active partner) to
+// bring back at half HP.
+function isRevivalRequest(request) {
+  return (request.side?.pokemon || []).some(mon => mon?.reviving);
 }
 
 function getMoveOptionsForActive(request, active, activeIndex, includeTargets) {
@@ -123,16 +137,24 @@ function targetTypeNeedsChoice(target) {
 
 function getSwitchActions(request, forced, activeIndex = 0) {
   const pokemon = request.side?.pokemon || [];
+  const reviving = forced && isRevivalRequest(request);
   return pokemon
     .map((mon, index) => ({mon, slot: index + 1}))
-    .filter(({mon}) => mon && !mon.active && !String(mon.condition || '').endsWith(' fnt'))
+    .filter(({mon}) => {
+      if (!mon) return false;
+      const fainted = String(mon.condition || '').endsWith(' fnt');
+      // Revival Blessing selects a fainted Pokemon (fainted actives allowed);
+      // every other switch selects a healthy bench Pokemon.
+      return reviving ? fainted : !mon.active && !fainted;
+    })
     .map(({mon, slot}) => ({
       type: forced ? 'force-switch' : 'switch',
       activeSlot: activeIndex + 1,
       slot,
       pokemon: cleanPokemonName(mon.ident || mon.details || `Slot ${slot}`),
       condition: mon.condition,
-      label: `Active ${activeIndex + 1}: switch to ${cleanPokemonName(mon.ident || mon.details || `Slot ${slot}`)}`,
+      reviving: reviving || undefined,
+      label: `Active ${activeIndex + 1}: ${reviving ? 'revive' : 'switch to'} ${cleanPokemonName(mon.ident || mon.details || `Slot ${slot}`)}`,
       choice: `switch ${slot}`,
     }));
 }

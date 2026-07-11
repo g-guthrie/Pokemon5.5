@@ -30,16 +30,25 @@ globalThis.fetch = async (url, options = {}) => {
   const prompt = provider === 'openai' ? String(requestBody.input || '') : String(requestBody.messages?.at(-1)?.content || '');
   const payload = parsePromptPayload(prompt);
   const choice = chooseLegalAction(payload.legalActions || []);
-  const content = JSON.stringify({
+  // Answer whichever schema the payload asked for: the turn questionnaire or
+  // the focused replacement mind.
+  const content = JSON.stringify(payload.decisionFrame?.decisionType === 'replacement' ? {
+    replacementMatchups: [`${choice}: legal smoke send-in with deterministic adapter proof.`],
+    replacementRisks: ['This no-paid smoke send-in only proves adapter and artifact contracts.'],
+    replacementPlan: ['Resolve the forced replacement and continue the smoke battle.'],
+    choice,
+    reason: 'Selected a legal no-paid smoke replacement.',
+  } : {
     gameStateSummary: [`${payload.role || 'agent'} has an actionable doubles request.`],
-    winConditions: ['Use exact legal choices and keep pressure on revealed active Pokemon.'],
-    loseConditions: ['Losing tempo to repeated protects is the main imminent loss path.'],
-    setupLines: [],
-    sweepPlans: ['Prefer direct legal pressure over unsupported setup in the smoke battle.'],
-    safeSwitches: [],
+    setArchetypes: ['Revealed actives read as generic smoke-battle sets.'],
+    unknownInformation: ['Opponent items and bench remain unrevealed in this smoke.'],
     opponentLikelyPlan: ['Opponent will choose from its own exact legal action set.'],
     biggestThreats: ['The opposing active slots are the immediate benchmark threats.'],
-    riskAssessment: ['This no-paid smoke only proves adapter and artifact contracts.'],
+    winConditions: ['Use exact legal choices and keep pressure on revealed active Pokemon.'],
+    loseConditions: ['Losing tempo to repeated protects is the main imminent loss path.'],
+    teraAndSwitchCheck: ['No smoke Terastallization or proactive switch is needed this turn.'],
+    candidateOutcomes: ['Into any legal response, the smoke action still resolves the turn.'],
+    decisionCheck: ['This no-paid smoke only proves adapter and artifact contracts.'],
     candidateChoices: [
       `${choice}: legal smoke action with deterministic adapter proof; risk is max-turn cap in this short run.`,
     ],
@@ -130,10 +139,12 @@ async function run() {
     assert(providerCalls.every(call => !call.promptContainsSeed), 'provider prompt leaked benchmark seed');
     assert(artifact.modelCalls.some(call => call.provider === 'openai'), 'artifact missing OpenAI model call');
     assert(artifact.modelCalls.some(call => call.provider === 'openrouter'), 'artifact missing OpenRouter model call');
-    assert(artifact.modelCalls.every(call => call.promptSchemaVersion === 'showdown-choice-prompt.v7'), 'artifact model calls missing prompt schema');
-    assert(artifact.modelCalls.every(call => call.responseSchemaVersion === 'showdown-choice-response.v6'), 'artifact model calls missing response schema');
+    assert(artifact.modelCalls.every(call => call.promptSchemaVersion === 'showdown-choice-prompt.v9'), 'artifact model calls missing prompt schema');
+    assert(artifact.modelCalls.every(call => call.responseSchemaVersion === 'showdown-choice-response.v9'), 'artifact model calls missing response schema');
     assert(artifact.modelCalls.every(call => call.prompt && call.rawText && call.analysisComplete === true), 'artifact missing prompt/raw response/analysis contract');
-    assert(artifact.modelCalls.every(call => call.analysis?.candidateChoices?.length), 'artifact missing candidate choice review');
+    // Turn calls compare candidateChoices; forced replacements compare
+    // replacementMatchups. Every call must carry one of the two reviews.
+    assert(artifact.modelCalls.every(call => call.analysis?.candidateChoices?.length || call.analysis?.replacementMatchups?.length), 'artifact missing candidate choice or replacement matchup review');
     assert(artifact.modelCalls.every(call => call.usage), 'artifact missing provider usage metadata');
     assert(!JSON.stringify(artifact).includes(fakeOpenAIKey), 'artifact leaked fake OpenAI key');
     assert(!JSON.stringify(artifact).includes(fakeOpenRouterKey), 'artifact leaked fake OpenRouter key');

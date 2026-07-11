@@ -7,20 +7,44 @@ import {
   speciesCard,
 } from './dex-context.mjs';
 
-export const PROMPT_SCHEMA_VERSION = 'showdown-choice-prompt.v7';
-export const RESPONSE_SCHEMA_VERSION = 'showdown-choice-response.v6';
-export const REQUIRED_ANALYSIS_FIELDS = [
+export const PROMPT_SCHEMA_VERSION = 'showdown-choice-prompt.v9';
+export const RESPONSE_SCHEMA_VERSION = 'showdown-choice-response.v9';
+// v9 turn-field order is a deliberate reasoning arc — models answer
+// top-to-bottom and each answer conditions the next: read the board, appraise
+// every revealed set, fence off what is still unknown, predict the opponent,
+// name the immediate threats, state the stakes, explicitly weigh Tera and
+// switches, then shortlist candidates, project each line against the likely
+// responses, and finish with a robustness check of the pick. Confirmed
+// information stays separated from inference.
+export const TURN_ANALYSIS_FIELDS = [
   'gameStateSummary',
-  'winConditions',
-  'loseConditions',
-  'setupLines',
-  'sweepPlans',
-  'safeSwitches',
+  'setArchetypes',
+  'unknownInformation',
   'opponentLikelyPlan',
   'biggestThreats',
-  'riskAssessment',
+  'winConditions',
+  'loseConditions',
+  'teraAndSwitchCheck',
   'candidateChoices',
+  'candidateOutcomes',
+  'decisionCheck',
 ];
+// A forced replacement (every legal action just sends a Pokemon in) gets a
+// focused three-question mind instead of the full turn questionnaire:
+// matchups, risks, then the plan the send-in enables.
+export const REPLACEMENT_ANALYSIS_FIELDS = [
+  'replacementMatchups',
+  'replacementRisks',
+  'replacementPlan',
+];
+// Union, for consumers that sanitize or serialize whatever analysis a call
+// carries (artifacts, mind summaries) regardless of decision type.
+export const REQUIRED_ANALYSIS_FIELDS = [...TURN_ANALYSIS_FIELDS, ...REPLACEMENT_ANALYSIS_FIELDS];
+
+// The schema a given request must answer, derived from its legal actions.
+export function analysisFieldsFor(legalActions = []) {
+  return classifyDecision(legalActions) === 'replacement' ? REPLACEMENT_ANALYSIS_FIELDS : TURN_ANALYSIS_FIELDS;
+}
 const RESPONSE_JSON_SCHEMA_NAME = 'showdown_choice_response';
 
 // A human can scroll the entire battle log; keep the window wide enough that
@@ -34,6 +58,7 @@ export function buildModelInput(role, observation, legalActions) {
   const legalActionPartCatalog = buildLegalActionPartCatalog(legalActions);
   const situation = summarizeSituation(screenObservation, legalActions);
   const battleBriefing = buildBattleBriefing(screenObservation, legalActions, legalActionPartCatalog);
+  const decisionType = classifyDecision(legalActions);
   // v5 single-copy history: the human-readable log now lives only in
   // battleBriefing.recentBattleLog; keep just the structured recent events on
   // the screen observation so the log is not serialized twice per decision.
@@ -45,10 +70,18 @@ export function buildModelInput(role, observation, legalActions) {
     promptSchemaVersion: PROMPT_SCHEMA_VERSION,
     responseSchemaVersion: RESPONSE_SCHEMA_VERSION,
     role,
-    objective: 'Choose one exact legal action for this Pokemon Showdown [Gen 9] Random Doubles Battle turn.',
+    objective: decisionType === 'replacement'
+      ? (legalActions.some(action => (Array.isArray(action.choices) ? action.choices : [action]).some(part => part.reviving))
+        ? 'Revival Blessing resolved: choose the exact legal switch command that revives the most valuable FAINTED Pokemon (it returns at half HP) in this Pokemon Showdown [Gen 9] Random Doubles Battle.'
+        : 'A Pokemon fainted (or must leave the field): choose the exact legal switch command that sends in the best replacement for this Pokemon Showdown [Gen 9] Random Doubles Battle.')
+      : 'Choose one exact legal action for this Pokemon Showdown [Gen 9] Random Doubles Battle turn.',
     decisionFrame: {
       perspective: role,
       format: screenObservation.formatid || '',
+      // What kind of decision this request is: 'turn' (attack/switch/tera),
+      // 'replacement' (every legal action sends in a bench Pokemon), or
+      // 'team-preview'. The tacticalChecklist below is tailored to it.
+      decisionType,
       sourceOfTruth: 'battleBriefing plus screenObservation plus legalActions in this payload',
       benchmarkGoal: 'Play to win under the same hidden information a human player on this side would have from the Showdown screen and battle log.',
       analysisStyle: 'Return short public tactical notes for auditability; do not expose hidden chain-of-thought.',
@@ -58,6 +91,7 @@ export function buildModelInput(role, observation, legalActions) {
       'legalActions[] is generated from the current Showdown request and is the only legal action set.',
       'The final choice must be byte-for-byte equal to one legalActions[] string.',
       'For doubles, combined choices must command each active slot in order, e.g. "move 1 1, move 2 2" or "switch 3, pass".',
+      'Attacking is never mandatory: switching a healthy Pokemon out, and Terastallizing (choices ending in "terastallize"), are first-class options whenever legalActions[] offers them — weigh them every turn, not only when forced.',
     ],
     hiddenInfoRules: [
       'Use only this prompt payload as the source of truth.',
@@ -67,42 +101,18 @@ export function buildModelInput(role, observation, legalActions) {
       'Do not infer unrevealed opponent bench Pokemon, unrevealed items, unrevealed abilities, or unrevealed moves as facts.',
       'The final choice must exactly equal one legalActions[] string.',
     ],
-    responseOrder: [...REQUIRED_ANALYSIS_FIELDS, 'choice', 'reason'],
-    tacticalChecklist: [
-      'Summarize active board state, speed/pressure, field, side conditions, HP/status, boosts, volatiles, and recent visible battle log.',
-      'Describe realistic win conditions from your known team and the revealed opposing Pokemon.',
-      'Name the most imminent lose conditions: what sequence loses you this game soon, and whether this turn must prevent it.',
-      'Identify setup or support lines and whether either side can safely enable them.',
-      'Account for held items: your own are known; opponent items only when revealed. Weigh Choice locks, berries, Focus Sash, Life Orb, Assault Vest, and similar effects in damage and speed reads.',
-      'Identify sweeper, damage, positioning, or cleaning approaches for your side.',
-      'Identify safe switches, forced defensive pivots, or why staying in is better.',
-      'Predict the opponent likely plan from only revealed information.',
-      'Name the biggest immediate threats and what your selected choice covers.',
-      'Assess the main risk of your choice without using private or unrevealed opponent information.',
-      'Compare 2 to 4 concrete candidate choices by exact legalActions[] string, including their upside and main risk.',
-      'Then commit to one exact legal action from legalActions[].',
-    ],
+    responseOrder: [...analysisFieldsFor(legalActions), 'choice', 'reason'],
+    tacticalChecklist: tacticalChecklistFor(decisionType),
     outputBudget: {
       style: 'thorough and structured; every sentence should carry a concrete tactical fact',
       perString: '1-2 full sentences, no markdown',
-      arrays: '1-3 strings per tactical field; candidateChoices should have 2-4 strings',
+      arrays: decisionType === 'replacement'
+        ? 'replacementMatchups should have one string per serious send-in; 1-3 strings for the other fields'
+        : '1-3 strings per tactical field; candidateChoices should have 2-4 strings',
       reason: '1-2 sentences',
       hardLimit: 'keep the entire JSON response under 4000 output tokens',
     },
-    responseSchema: {
-      gameStateSummary: ['1-3 sentences covering the active board, speed, HP, field, and pressure.'],
-      winConditions: ['1-3 sentences about how this side can win from known information.'],
-      loseConditions: ['1-3 sentences naming the most imminent ways this side loses and whether they are live this turn.'],
-      setupLines: ['0-2 sentences about viable setup/support, or [] if none.'],
-      sweepPlans: ['0-2 sentences about damage or cleaning lines, or [] if none.'],
-      safeSwitches: ['0-2 sentences about useful switches or why none are needed.'],
-      opponentLikelyPlan: ['1-3 sentences based only on revealed information.'],
-      biggestThreats: ['1-3 sentences naming immediate threats and what covers them.'],
-      riskAssessment: ['1-2 sentences naming what can go wrong with the selected plan.'],
-      candidateChoices: ['2-4 strings. Each must start with an exact legalActions[] string, then state upside and risk.'],
-      choice: 'Exact legalActions[] string.',
-      reason: 'A concise final justification for the selected legal choice.',
-    },
+    responseSchema: responseSchemaFor(decisionType),
     battleBriefing,
     situation,
     dexContext: buildDexContext(screenObservation),
@@ -144,11 +154,80 @@ function buildDexContext(state = {}) {
   };
 }
 
+// Per-field answer guidance, keyed to the decision type's field list.
+function responseSchemaFor(decisionType) {
+  if (decisionType === 'replacement') {
+    return {
+      replacementMatchups: ['One string per serious send-in. Each must start with an exact legalActions[] string, then state how that Pokemon matches up into the current board: typing, speed, bulk, and immediate pressure.'],
+      replacementRisks: ['1-3 sentences naming what each serious send-in could cost: arrival punishes, double targeting, feeding a setup sweeper, or spending a Pokemon your endgame needs.'],
+      replacementPlan: ['1-2 sentences: the chosen send-in, why it is most robust, and the plan it enables on the next turn.'],
+      choice: 'Exact legalActions[] string.',
+      reason: 'A concise final justification for the selected legal choice.',
+    };
+  }
+  return {
+    gameStateSummary: ['1-3 sentences: the complete current board — HP, status, boosts, field effects, speed order, positioning, revealed information, and remaining resources.'],
+    setArchetypes: ['1-3 sentences appraising each revealed Pokemon’s set from known evidence: fast, bulky, offensive, supportive, setup, or mixed, plus the plausible variants that remain.'],
+    unknownInformation: ['1-3 sentences naming what is still unknown and which reasonable sets, speed tiers, damage ranges, items, abilities, or unrevealed Pokemon must be respected without treating them as facts.'],
+    opponentLikelyPlan: ['1-3 sentences: what the opponent most likely does this turn, plus the credible alternatives that must be covered.'],
+    biggestThreats: ['1-3 sentences naming the most immediate tactical threats: KOs, disruption, setup, speed control, targeting combinations, action-order dangers.'],
+    winConditions: ['1-3 sentences on realistic paths to winning and what must be created or preserved.'],
+    loseConditions: ['1-3 sentences on the sequences that lose the game, now or over coming turns, and what must be prevented this turn.'],
+    teraAndSwitchCheck: ['1-3 sentences: should anyone Terastallize this turn — whose Tera type changes a key matchup, and is now the right time to spend it — and should any active Pokemon switch out instead of acting?'],
+    candidateChoices: ['2-4 strings. Each must start with an exact legalActions[] string, then state how it advances your plan or covers theirs.'],
+    candidateOutcomes: ['1-3 sentences projecting the strongest candidates against the opponent’s likely action and most dangerous alternatives, and the next-turn position each creates.'],
+    decisionCheck: ['1-2 sentences: why the chosen action is most robust across uncertainty, worst case, resources, and flexibility — plus the intended follow-up plan.'],
+    choice: 'Exact legalActions[] string.',
+    reason: 'A concise final justification for the selected legal choice.',
+  };
+}
+
+// What kind of decision this request is. 'replacement' means every legal
+// action only sends Pokemon in (a faint or forced pivot) — the reasoning
+// scaffold shifts from "pick this turn's action" to "pick the best send-in".
+function classifyDecision(legalActions = []) {
+  if (!legalActions.length) return 'wait';
+  if (legalActions.every(action => action.type === 'team')) return 'team-preview';
+  const partsOf = action => (Array.isArray(action.choices) ? action.choices : [action]);
+  const switchOnly = legalActions.every(action => partsOf(action).every(part =>
+    part.type === 'force-switch' || part.type === 'switch' || (part.choice || part.command) === 'pass'));
+  return switchOnly ? 'replacement' : 'turn';
+}
+
+// The same ten response questions answer both decision types; the checklist
+// steers what each answer should weigh. Both walk the v8 reasoning arc.
+function tacticalChecklistFor(decisionType) {
+  if (decisionType === 'replacement') {
+    return [
+      'Read the board your replacement walks into — HP, status, boosts, field effects, speed order, and both sides’ remaining resources — separating revealed facts from inference.',
+      'Weigh every legal switch by exact legalActions[] string: typing into the revealed sets, speed, bulk, immediate pressure, and synergy with your remaining active Pokemon.',
+      'For each serious send-in, name what it risks: arrival punishes, double targeting next turn, feeding a setup sweeper, or spending a Pokemon your endgame needs.',
+      'State the plan the chosen send-in enables on the next turn and how it advances your win conditions.',
+      'Then commit to one exact legal action from legalActions[].',
+    ];
+  }
+  return [
+    'Summarize the complete current board state: HP, status, boosts, field effects, speed order, positioning, revealed information, and each side’s remaining resources.',
+    'Appraise each revealed Pokemon’s set from known nature, stats, moves, item, ability, damage, and speed evidence: fast, bulky, offensive, supportive, setup, or mixed — and which plausible variants remain.',
+    'Name what is still unknown, and which reasonable sets, speed tiers, damage ranges, items, abilities, or unrevealed Pokemon must be respected without treating them as facts.',
+    'Account for held items: your own are known; opponent items only when revealed. Weigh Choice locks, berries, Focus Sash, Life Orb, Assault Vest, and similar effects in damage and speed reads.',
+    'Predict what the opponent is most likely trying to accomplish this turn, and which alternative attacks, targets, switches, protects, support moves, or Terastallizations must also be covered.',
+    'Name the most immediate tactical threats: possible knockouts, disruption, setup, speed control, targeting combinations, and dangerous action-order interactions.',
+    'Describe your realistic paths to winning, and which Pokemon, matchup advantages, resources, field conditions, or favorable endgames must be created or preserved.',
+    'Name the sequences that could lose you the game, immediately or over the next several turns, and which of those failure conditions must be prevented this turn.',
+    'Decide explicitly whether anyone should Terastallize — whose Tera type flips a key matchup, and whether spending your once-per-battle Tera now beats saving it — and whether any active Pokemon should switch out instead of acting.',
+    'List the legal actions that deserve serious consideration by exact legalActions[] string — attacks with each viable target, switches out of bad matchups, protects and support moves, and Terastallization variants — and how each advances your plan or covers theirs.',
+    'Project how each strongest candidate performs against the opponent’s likely action and its most dangerous credible alternatives, and what position each outcome creates next turn.',
+    'State why the chosen action is most robust across uncertainty, immediate value, worst-case risk, resource preservation, and future flexibility — and your intended follow-up plan.',
+    'Then commit to one exact legal action from legalActions[].',
+  ];
+}
+
 export function buildChoicePrompt(role, observation, legalActions) {
   return [
     'You are a competitive Pokemon doubles player controlling one side in a local Pokemon Showdown benchmark battle.',
     'The JSON payload is your screen-equivalent state: your private team, the visible opponent information, the visible battle log, field state, side conditions, and exact legal Showdown choices.',
-    'First write concise public tactical notes in the requested JSON fields: game state, win conditions, setup, sweep/damage plans, switches, opponent plan, threats, risk, and candidate legal choices.',
+    'First write concise public tactical notes answering every field in responseOrder, in that order — the payload tailors the fields to this decision (a full turn, or picking a replacement after a faint). Keep confirmed information clearly separate from inference.',
     'Do not output markdown, hidden chain-of-thought, or facts about unrevealed opponent information.',
     'Return JSON only, matching responseSchema and responseOrder. The choice must exactly match one legalActions[] string.',
     '',
@@ -166,21 +245,26 @@ export function buildChoiceResponseJsonSchema(legalActions = []) {
     type: 'array',
     items: tacticalString,
   };
-  const properties = Object.fromEntries(REQUIRED_ANALYSIS_FIELDS.map(field => [field, tacticalArray]));
-  for (const field of ['gameStateSummary', 'winConditions', 'loseConditions', 'opponentLikelyPlan', 'biggestThreats', 'riskAssessment']) {
-    properties[field] = {...tacticalArray, minItems: 1};
+  // The field list matches the request's decision type (turn vs forced
+  // replacement). Every question is always answerable, so every field demands
+  // at least one entry.
+  const analysisFields = analysisFieldsFor(legalActions);
+  const properties = Object.fromEntries(analysisFields.map(field => [field, {...tacticalArray, minItems: 1}]));
+  for (const field of ['candidateChoices', 'replacementMatchups']) {
+    if (!properties[field]) continue;
+    // These lines each start with an exact legal choice string, so they run longer.
+    properties[field] = {
+      type: 'array',
+      items: {type: 'string', maxLength: 520},
+      minItems: 1,
+    };
   }
-  properties.candidateChoices = {
-    type: 'array',
-    items: {type: 'string', maxLength: 520},
-    minItems: 1,
-  };
   properties.choice = choices.length ? {type: 'string', enum: choices} : {type: 'string'};
   properties.reason = {type: 'string', maxLength: 400};
   return {
     type: 'object',
     properties,
-    required: [...REQUIRED_ANALYSIS_FIELDS, 'choice', 'reason'],
+    required: [...analysisFields, 'choice', 'reason'],
     additionalProperties: false,
   };
 }
@@ -206,15 +290,19 @@ export function buildChatCompletionResponseFormat(legalActions = []) {
 export function normalizeDecisionAnalysis(parsed = {}) {
   return {
     gameStateSummary: stringList(parsed.gameStateSummary || parsed.stateSummary || parsed.summary),
-    winConditions: stringList(parsed.winConditions || parsed.winCons || parsed.pathToWin || parsed.pathsToWin),
-    loseConditions: stringList(parsed.loseConditions || parsed.losingConditions || parsed.lossConditions || parsed.pathsToLoss),
-    setupLines: stringList(parsed.setupLines || parsed.possibleSetups || parsed.setupApproaches),
-    sweepPlans: stringList(parsed.sweepPlans || parsed.sweeperApproaches || parsed.damagePlans),
-    safeSwitches: stringList(parsed.safeSwitches || parsed.easySwitches || parsed.switches),
+    setArchetypes: stringList(parsed.setArchetypes || parsed.archetypes || parsed.setAppraisal || parsed.revealedSets),
+    unknownInformation: stringList(parsed.unknownInformation || parsed.unknowns || parsed.hiddenInformation || parsed.openInformation),
     opponentLikelyPlan: stringList(parsed.opponentLikelyPlan || parsed.opponentPlan || parsed.opponentMostLikely),
     biggestThreats: stringList(parsed.biggestThreats || parsed.threats),
-    riskAssessment: stringList(parsed.riskAssessment || parsed.risks || parsed.failureModes),
+    winConditions: stringList(parsed.winConditions || parsed.winCons || parsed.pathToWin || parsed.pathsToWin),
+    loseConditions: stringList(parsed.loseConditions || parsed.losingConditions || parsed.lossConditions || parsed.pathsToLoss),
+    teraAndSwitchCheck: stringList(parsed.teraAndSwitchCheck || parsed.teraCheck || parsed.teraSwitchCheck || parsed.teraAndSwitches),
     candidateChoices: stringList(parsed.candidateChoices || parsed.candidateChoiceReview || parsed.choiceReview || parsed.consideredChoices || parsed.shortlist),
+    candidateOutcomes: stringList(parsed.candidateOutcomes || parsed.lineProjections || parsed.outcomeProjections || parsed.candidateProjections),
+    decisionCheck: stringList(parsed.decisionCheck || parsed.riskAssessment || parsed.robustnessCheck || parsed.finalCheck),
+    replacementMatchups: stringList(parsed.replacementMatchups || parsed.switchMatchups || parsed.replacementOptions || parsed.sendInMatchups),
+    replacementRisks: stringList(parsed.replacementRisks || parsed.switchRisks || parsed.sendInRisks),
+    replacementPlan: stringList(parsed.replacementPlan || parsed.switchPlan || parsed.sendInPlan),
   };
 }
 
@@ -347,6 +435,9 @@ function buildBattleBriefing(state = {}, legalActions = [], legalActionPartCatal
       atomicParts: legalActionPartCatalog,
       doubles: 'Each legalActions[] entry is a complete two-slot command for the current request.',
       targetSlots: 'Positive targets are opposing active slots; negative targets are ally slots.',
+      switching: 'Parts beginning "switch N" replace that active Pokemon with bench slot N. Switching is a normal turn option for escaping bad matchups, not only a forced replacement after a faint. After Revival Blessing, "switch N" instead selects the fainted Pokemon in slot N to revive at half HP.',
+      terastallize: 'A move part ending in "terastallize" changes that Pokemon to its teraType before it attacks — available once per battle for your side, so weigh the timing every turn it appears.',
+      pass: 'A "pass" part means that slot takes no action this request (already fainted or not required to act).',
       noPartialChoices: 'Do not return only one move, a label, an index, or a paraphrase.',
       candidateChoiceRequirement: 'candidateChoices must compare exact legalActions[] strings before the final choice.',
     },

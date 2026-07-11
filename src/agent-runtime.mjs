@@ -576,7 +576,7 @@ function resultFromModelText({
   const fallback = !action && context.allowFallback ? firstSafeAction(legalActions) : null;
   const selectedAction = action || fallback;
   const analysis = PromptPipeline.normalizeDecisionAnalysis(parsed);
-  const analysisMissing = missingAnalysisFields(parsed, analysis);
+  const analysisMissing = missingAnalysisFields(parsed, analysis, legalActions);
   const call = createBaseCall(agent, role, {
     at: startedAt,
     responseId,
@@ -652,22 +652,29 @@ function createBaseCall(agent, role, details = {}) {
   };
 }
 
-const OPTIONAL_EMPTY_ANALYSIS_FIELDS = new Set(['setupLines', 'sweepPlans', 'safeSwitches']);
+// Every v8 question is always answerable, so no field may be empty.
+const OPTIONAL_EMPTY_ANALYSIS_FIELDS = new Set([]);
 const ANALYSIS_FIELD_ALIASES = {
   gameStateSummary: ['gameStateSummary', 'stateSummary', 'summary'],
-  winConditions: ['winConditions', 'winCons', 'pathToWin', 'pathsToWin'],
-  loseConditions: ['loseConditions', 'losingConditions', 'lossConditions', 'pathsToLoss'],
-  setupLines: ['setupLines', 'possibleSetups', 'setupApproaches'],
-  sweepPlans: ['sweepPlans', 'sweeperApproaches', 'damagePlans'],
-  safeSwitches: ['safeSwitches', 'easySwitches', 'switches'],
+  setArchetypes: ['setArchetypes', 'archetypes', 'setAppraisal', 'revealedSets'],
+  unknownInformation: ['unknownInformation', 'unknowns', 'hiddenInformation', 'openInformation'],
   opponentLikelyPlan: ['opponentLikelyPlan', 'opponentPlan', 'opponentMostLikely'],
   biggestThreats: ['biggestThreats', 'threats'],
-  riskAssessment: ['riskAssessment', 'risks', 'failureModes'],
+  winConditions: ['winConditions', 'winCons', 'pathToWin', 'pathsToWin'],
+  loseConditions: ['loseConditions', 'losingConditions', 'lossConditions', 'pathsToLoss'],
+  teraAndSwitchCheck: ['teraAndSwitchCheck', 'teraCheck', 'teraSwitchCheck', 'teraAndSwitches'],
   candidateChoices: ['candidateChoices', 'candidateChoiceReview', 'choiceReview', 'consideredChoices', 'shortlist'],
+  candidateOutcomes: ['candidateOutcomes', 'lineProjections', 'outcomeProjections', 'candidateProjections'],
+  decisionCheck: ['decisionCheck', 'riskAssessment', 'robustnessCheck', 'finalCheck'],
+  replacementMatchups: ['replacementMatchups', 'switchMatchups', 'replacementOptions', 'sendInMatchups'],
+  replacementRisks: ['replacementRisks', 'switchRisks', 'sendInRisks'],
+  replacementPlan: ['replacementPlan', 'switchPlan', 'sendInPlan'],
 };
 
-function missingAnalysisFields(parsed = {}, analysis = {}) {
-  return PromptPipeline.REQUIRED_ANALYSIS_FIELDS.filter(field => {
+function missingAnalysisFields(parsed = {}, analysis = {}, legalActions = []) {
+  // Completeness is judged against the schema this request was asked to
+  // answer: the full turn questionnaire, or the three replacement questions.
+  return PromptPipeline.analysisFieldsFor(legalActions).filter(field => {
     if (!fieldWasReturned(parsed, field)) return true;
     if (OPTIONAL_EMPTY_ANALYSIS_FIELDS.has(field)) return false;
     return !Array.isArray(analysis[field]) || !analysis[field].length;

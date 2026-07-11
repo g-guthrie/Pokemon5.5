@@ -123,6 +123,16 @@ function handleHttpRequest(req, res) {
     });
     return;
   }
+  if (url.pathname === '/api/credits' && req.method === 'POST') {
+    // The footer balance ticker polls this during runs; cheaper than a full
+    // key validation (one upstream call) and rate-limited accordingly.
+    if (!rateLimit(req, 'credits', 30, 60000)) {
+      sendJson(res, {ok: false, error: 'Too many balance checks — wait a minute'}, 429);
+      return;
+    }
+    void handleCreditsRequest(req, res);
+    return;
+  }
   if (url.pathname === '/api/key/validate' && req.method === 'POST') {
     if (!rateLimit(req, 'key-validate', 10, 60000)) {
       sendJson(res, {ok: false, error: 'Too many key checks — wait a minute'}, 429);
@@ -1468,7 +1478,7 @@ function summarizeDecisionAnalysis(analysis = null) {
     output[key] = analysis[key]
       .map(value => sanitizeText(String(value || '')).slice(0, 420))
       .filter(Boolean)
-      .slice(0, key === 'candidateChoices' ? 8 : 6);
+      .slice(0, key === 'candidateChoices' || key === 'replacementMatchups' ? 8 : 6);
   }
   return output;
 }
@@ -1545,7 +1555,10 @@ function summarizeLiveRunFields(run) {
 function liveRunPhase(run) {
   if (!run) return 'idle';
   if (run.paused || run.status === 'paused') return 'paused';
-  if (run.status === 'finished' || run.status === 'stopped') return 'finished';
+  // A stopped run is not a finished one: the viewer killed it mid-game, and
+  // the status pill must say so instead of presenting a phantom result.
+  if (run.status === 'stopped') return 'stopped';
+  if (run.status === 'finished') return 'finished';
   if (run.status === 'error') return 'error';
   const phases = Object.values(run.roleStates || {}).map(state => state?.phase);
   if (phases.includes('error')) return 'error';
@@ -1646,6 +1659,30 @@ function normalizeProviderKeys(body = {}) {
   const openrouter = typeof body.openrouterKey === 'string' ? body.openrouterKey.trim() : '';
   if (openrouter && openrouter.length <= 250) keys.openrouter = openrouter;
   return keys;
+}
+
+// Remaining OpenRouter balance for the footer ticker. The key is never
+// logged or stored; only the balance number is returned.
+async function handleCreditsRequest(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const rawKey = body.key || body.openrouterKey;
+    const key = typeof rawKey === 'string' ? rawKey.trim() : '';
+    if (!key || key.length > 250) {
+      sendJson(res, {ok: false, error: 'No key provided'}, 400);
+      return;
+    }
+    const response = await fetch('https://openrouter.ai/api/v1/credits', {headers: {authorization: `Bearer ${key}`}});
+    if (!response.ok) {
+      sendJson(res, {ok: false, error: `OpenRouter rejected the key (HTTP ${response.status})`}, 200);
+      return;
+    }
+    const credits = (await response.json().catch(() => ({}))).data || {};
+    const balance = Number(credits.total_credits || 0) - Number(credits.total_usage || 0);
+    sendJson(res, {ok: true, balance: Number.isFinite(balance) ? Math.round(balance * 10000) / 10000 : null});
+  } catch {
+    sendJson(res, {ok: false, error: 'Could not reach OpenRouter'}, 200);
+  }
 }
 
 // Validates a visitor key without making an inference call. The key is never

@@ -1851,3 +1851,14 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
 
 
 
+
+/* Footer credits ticker: the visitor's remaining OpenRouter balance, always
+   on screen once a key is validated, refreshed as turns burn credits. */
+.credit-ticker {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #9fd8a8;
+  margin-right: 14px;
+}
+.credit-ticker.credit-low { color: #f2b8b8; }
+.credit-ticker.hidden { display: none; }
