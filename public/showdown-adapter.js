@@ -23,6 +23,10 @@
   // native controls stay in the DOM (presses still land on them to keep the
   // client's request state exact) but are visually hidden.
   var hideControls = params.get('hidecontrols') === '1';
+  // Minds mode: the client hosts the Model Minds itself. The battle log is
+  // replaced by Player 2's mind column; Player 1 gets a matching column on
+  // the left. The parent streams mind content in via sd-mind messages.
+  var mindsMode = params.get('minds') === '1';
   // The official client's dark mode: rules are scoped under html.dark.
   if (params.get('theme') === 'dark') document.documentElement.classList.add('dark');
   // Parent-driven presses: the arena sequences press animations globally
@@ -33,6 +37,7 @@
   // buttons the model chose from.
   var parentDriven = params.get('drive') === 'parent';
   var battleId = params.get('battleId') || '';
+  var waitForStart = params.get('wait') === '1';
   var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   var room = null;
   var socket = null;
@@ -46,6 +51,7 @@
   };
 
   // --- model interaction state ---
+  var showPaused = false;           // parent-driven hard freeze: nothing moves
   var animating = false;            // a model click animation is running
   var suppressSend = replayMode;    // drop choice sends (always in replay; during animations in live)
   var pendingChunks = [];           // protocol buffered while animating
@@ -130,6 +136,7 @@
     debug('connecting ' + role);
     var query = '/ws?role=' + encodeURIComponent(role);
     if (battleId) query += '&battleId=' + encodeURIComponent(battleId);
+    if (waitForStart) query += '&wait=1';
     socket = new WebSocket(protocol + '//' + location.host + query);
     socket.addEventListener('open', function () { debug('socket open'); });
     socket.addEventListener('message', function (event) {
@@ -179,7 +186,7 @@
 
   function applyProtocol(chunk, instant) {
     if (!chunk) return;
-    if ((animating || awaitingParent > 0) && !instant) {
+    if ((animating || awaitingParent > 0 || showPaused) && !instant) {
       pendingChunks.push(chunk);
       return;
     }
@@ -312,7 +319,7 @@
   setInterval(function () {
     // Never auto-apply held requests while presses are queued or frozen: a
     // future request would replace the buttons a queued press must land on.
-    if (!animating && awaitingParent === 0 && pendingAnimations === 0) flushHeldRequests(false);
+    if (!animating && !showPaused && awaitingParent === 0 && pendingAnimations === 0) flushHeldRequests(false);
   }, 250);
 
   // The official client removes a fainted Pokemon's nameplate via a fade-out
@@ -636,6 +643,113 @@
     notifyParent({type: 'sd-choice-done', choice: choice});
   }
 
+  // --- model mind columns -----------------------------------------------------
+  // In minds mode the client itself hosts the two Model Mind panels. The
+  // parent streams content with sd-mind (the thought process) and
+  // sd-mind-meta (model name / action chip) messages; content survives
+  // nothing — the parent re-flushes its latest state on every sd-ready.
+
+  var mindPanels = {};
+
+  function buildMindColumn(side) {
+    var column = document.createElement('aside');
+    column.className = 'mind-column';
+    column.dataset.side = side;
+    var header = document.createElement('header');
+    var dot = document.createElement('i');
+    dot.className = 'mind-dot';
+    header.appendChild(dot);
+    var who = document.createElement('span');
+    who.className = 'mind-who';
+    who.textContent = side === 'p1' ? 'Player 1' : 'Player 2';
+    header.appendChild(who);
+    var roleTag = document.createElement('span');
+    roleTag.className = 'mind-role';
+    roleTag.textContent = side.toUpperCase();
+    header.appendChild(roleTag);
+    var chip = document.createElement('span');
+    chip.className = 'action-chip';
+    chip.textContent = 'waiting';
+    header.appendChild(chip);
+    column.appendChild(header);
+    var body = document.createElement('section');
+    body.className = 'mind';
+    column.appendChild(body);
+    document.body.appendChild(column);
+    var panel = {who: who, chip: chip, body: body, chipTimer: null};
+    mindPanels[side] = panel;
+    if (window.ArenaMind) {
+      window.ArenaMind.renderMind(body, null, {placeholder: 'Waiting for the first decision…'});
+    }
+    return panel;
+  }
+
+  function buildMindColumns() {
+    buildMindColumn('p1');
+    buildMindColumn('p2');
+  }
+
+  function renderMind(role, data, options) {
+    var panel = mindPanels[role];
+    if (!panel || !window.ArenaMind) return;
+    window.ArenaMind.renderMind(panel.body, data || null, options || {});
+  }
+
+  function updateMindMeta(role, meta) {
+    var panel = mindPanels[role];
+    if (!panel) return;
+    if (meta.who != null) panel.who.textContent = meta.who;
+    if (meta.chip != null) setPanelChip(panel, meta.chip);
+    if (meta.fresh != null) {
+      clearTimeout(panel.chipTimer);
+      panel.chip.classList.toggle('fresh', Boolean(meta.fresh));
+      if (meta.fresh) {
+        panel.chipTimer = setTimeout(function () { panel.chip.classList.remove('fresh'); }, 4000);
+      }
+    }
+  }
+
+  function applyMind(message) {
+    renderMind(message.role, message.data, message.options);
+  }
+
+  function applyMindMeta(message) {
+    updateMindMeta(message.role, message);
+  }
+
+  // The arena and frame are always same-origin. Give the parent a synchronous
+  // rendering bridge so Model Mind output cannot disappear in a postMessage
+  // timing gap. The message handlers remain as a rolling-deploy fallback for
+  // a parent or frame from the previous build.
+  window.ArenaMindBridge = {
+    render: renderMind,
+    setMeta: updateMindMeta,
+  };
+
+  // A slow model should read as thinking, not broken: the chip counts the
+  // seconds out loud while a "thinking" state holds.
+  function setPanelChip(panel, text) {
+    var thinking = /^thinking/i.test(String(text));
+    if (thinking) {
+      if (!panel.thinkingSince) {
+        panel.thinkingSince = Date.now();
+        panel.chip.textContent = 'thinking…';
+        panel.thinkTicker = setInterval(function () {
+          var seconds = Math.floor((Date.now() - panel.thinkingSince) / 1000);
+          panel.chip.textContent = seconds >= 3 ? 'thinking · ' + seconds + 's' : 'thinking…';
+        }, 1000);
+      }
+      // Repeated "thinking" states must not reset the stopwatch.
+      return;
+    }
+    if (panel.thinkTicker) {
+      clearInterval(panel.thinkTicker);
+      panel.thinkTicker = null;
+      panel.thinkingSince = 0;
+    }
+    panel.chip.textContent = text;
+  }
+
   // --- replay message channel -------------------------------------------------
 
   window.addEventListener('message', function (event) {
@@ -662,6 +776,22 @@
       }
       void animateChoice(message.choice, message.rqid, Boolean(message.instant));
     }
+    if (message.type === 'sd-mind' && mindsMode) applyMind(message);
+    if (message.type === 'sd-mind-meta' && mindsMode) applyMindMeta(message);
+    if (message.type === 'sd-pause') {
+      // Hard freeze: halt the battle scene mid-frame and stop applying
+      // protocol. Resume plays the scene and drains whatever queued.
+      showPaused = Boolean(message.paused);
+      try {
+        if (room && room.battle) {
+          if (showPaused) room.battle.pause();
+          else room.battle.play();
+        }
+      } catch (error) {
+        debug('pause toggle error ' + error.message);
+      }
+      if (!showPaused && !animating && awaitingParent === 0) flushPending();
+    }
     if (message.type === 'sd-reset') location.reload();
   });
 
@@ -671,6 +801,10 @@
     if (hideControls && document.body) {
       document.body.dataset.hideControls = '1';
       document.documentElement.dataset.hideControlsRoot = '1';
+    }
+    if (mindsMode && document.body) {
+      document.body.dataset.minds = '1';
+      buildMindColumns();
     }
     BattleSound.setMute(true);
     room = new BattleRoom({

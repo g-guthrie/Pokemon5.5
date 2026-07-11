@@ -53,10 +53,14 @@ html, body {
   margin: 0;
   padding: 0;
   -webkit-font-smoothing: antialiased;
+  /* The room: royal Pokémon blue — clearly lighter and bluer than the
+     console's near-black navy glass, so the battle screen reads as a dark
+     device sitting in a blue arena. */
   background:
-    radial-gradient(1100px 420px at 18% -12%, rgba(227, 53, 13, 0.05), transparent 60%),
-    radial-gradient(1100px 420px at 82% -12%, rgba(42, 117, 187, 0.07), transparent 60%),
-    var(--bg);
+    radial-gradient(1100px 460px at 18% -12%, rgba(227, 53, 13, 0.16), transparent 60%),
+    radial-gradient(1100px 460px at 82% -12%, rgba(120, 180, 240, 0.18), transparent 60%),
+    linear-gradient(180deg, #1d4380 0%, #163362 55%, #102546 100%);
+  background-attachment: fixed;
   color: var(--text);
   font: 13px/1.55 var(--sans);
   min-height: 100%;
@@ -64,7 +68,16 @@ html, body {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(28, 43, 74, 0.25) transparent;
+  scrollbar-color: rgba(140, 165, 205, 0.35) transparent;
+}
+
+/* Text that sits directly on the navy room (not inside a white card). */
+.brand { color: #eef4fb; }
+.site-footer, .site-disclaimer { color: #7e93b8; }
+.footer-hints kbd {
+  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.07);
+  color: #c8d8ef;
 }
 
 main {
@@ -94,50 +107,15 @@ main {
 .brand .bolt { color: var(--poke-yellow); margin-right: 6px; text-shadow: 0 1px 0 rgba(28, 43, 74, 0.35); }
 
 .brand .grad {
-  background: linear-gradient(90deg, var(--p1), var(--p2));
+  /* Brightened rivalry gradient — the brand blue itself would sink into the
+     royal-blue room. */
+  background: linear-gradient(90deg, #ff7a55, #ffd94d);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
 
-.tabs {
-  display: flex;
-  gap: 4px;
-  background: var(--card);
-  border: 1px solid var(--line-soft);
-  border-radius: 999px;
-  padding: 4px;
-  box-shadow: 0 2px 8px rgba(28, 43, 74, 0.06);
-}
-
-.tabs button {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  color: var(--text-dim);
-  font: inherit;
-  font-weight: 700;
-  padding: 6px 18px;
-  border-radius: 999px;
-  cursor: pointer;
-  transition: color 150ms ease, background 150ms ease;
-}
-
-.tabs button[aria-pressed="true"] {
-  background: var(--poke-yellow);
-  color: var(--ink);
-  box-shadow: inset 0 -2px 0 rgba(28, 43, 74, 0.18);
-}
-
 .topbar .spacer { flex: 1; }
-
-.operator-link {
-  color: var(--text-faint);
-  text-decoration: none;
-  font-size: 13px;
-}
-
-.operator-link:hover { color: var(--text-dim); }
 
 .site-footer {
   display: flex;
@@ -244,6 +222,123 @@ main {
 .model-plate.winner { border-color: var(--poke-yellow); box-shadow: 0 2px 14px rgba(255, 203, 5, 0.35); }
 .model-plate.winner .crown { opacity: 1; transform: translateY(0); }
 
+/* The live plates are the permanent model pickers: click to open the picker
+   in place. Mid-game picks queue for the next battle. */
+.model-plate.pickable { cursor: pointer; }
+
+.model-plate.pickable:hover {
+  border-color: var(--line);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+.model-plate .plate-edit {
+  position: absolute;
+  bottom: 8px;
+  font-size: 11px;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.model-plate.p1 .plate-edit { right: 14px; }
+.model-plate.p2 .plate-edit { left: 14px; }
+.model-plate.pickable:hover .plate-edit { opacity: 1; }
+.model-plate.open .plate-edit { opacity: 1; color: var(--poke-yellow-deep); }
+
+/* Queued model: a fine-print oval at the foot of the card — what plays the
+   NEXT game while the current one is still running. */
+.model-plate .plate-next {
+  font: 700 9.5px/1 var(--mono);
+  letter-spacing: 0.3px;
+  color: var(--gold);
+  background: rgba(184, 134, 11, 0.1);
+  border: 1px solid rgba(184, 134, 11, 0.45);
+  border-radius: 999px;
+  padding: 4px 10px;
+  margin-top: 6px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  align-self: flex-start;
+}
+
+.model-plate.p2 .plate-next { align-self: flex-end; }
+
+.model-plate.open {
+  border-color: rgba(255, 203, 5, 0.65);
+  box-shadow: 0 0 0 3px rgba(255, 203, 5, 0.25);
+}
+
+.model-plate .plate-picker[hidden] { display: none; }
+
+.model-plate .plate-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px dashed var(--line-soft);
+  cursor: default;
+  width: 100%;
+}
+
+.model-plate .plate-picker select {
+  width: 100%;
+  font: 600 12px/1.3 var(--sans);
+  color: var(--text);
+  background: var(--card-strong);
+  border: 1.5px solid var(--line);
+  border-radius: 9px;
+  padding: 7px 9px;
+}
+
+.model-plate .plate-picker select:disabled { opacity: 0.55; }
+
+/* ---------- key modal: replace the API key mid-session ---------- */
+
+.key-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(6, 12, 26, 0.62);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh 16px 16px;
+}
+
+.key-modal-card {
+  width: min(560px, 94vw);
+  background: var(--card);
+  border-radius: 18px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.key-modal-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 18px 11px;
+  font-weight: 800;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.key-modal-card > header button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.key-modal-card > header button:hover { color: var(--text); }
+
+#key-modal-body { padding: 14px 18px 18px; }
+
 .versus {
   display: flex;
   flex-direction: column;
@@ -269,6 +364,151 @@ main {
 .turn-ring strong {
   font: 700 19px/1 var(--mono);
 }
+
+/* Downbeat: a new turn lands with one pulse of the ring. */
+.turn-ring.pulse {
+  animation: turn-pulse 700ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+@keyframes turn-pulse {
+  0% { transform: scale(1); box-shadow: inset 0 -14px 0 rgba(255, 203, 5, 0.5), 0 0 0 0 rgba(255, 203, 5, 0.55); }
+  35% { transform: scale(1.12); box-shadow: inset 0 -14px 0 rgba(255, 203, 5, 0.5), 0 0 0 9px rgba(255, 203, 5, 0.18); }
+  100% { transform: scale(1); box-shadow: inset 0 -14px 0 rgba(255, 203, 5, 0.5), 0 0 0 0 rgba(255, 203, 5, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn-ring.pulse { animation: none; }
+}
+
+/* Between games: the one obvious way to run it back. */
+.series-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.next-game {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #2bbf78, var(--green));
+  color: #ffffff;
+  font: 800 10.5px/1 var(--sans);
+  letter-spacing: 0.2px;
+  padding: 7px 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 2px 0 #157a4b, 0 6px 14px rgba(31, 157, 99, 0.35);
+  transition: filter 120ms ease, transform 80ms ease, box-shadow 80ms ease;
+}
+
+.next-game:hover { filter: brightness(1.07); }
+.next-game:active { transform: translateY(1px); box-shadow: 0 1px 0 #157a4b, 0 3px 8px rgba(31, 157, 99, 0.3); }
+.next-game:disabled { filter: grayscale(0.7); cursor: default; box-shadow: none; }
+
+/* Session series score for the current matchup ("series 2–1"). */
+.series-score {
+  font: 700 11px/1 var(--mono);
+  letter-spacing: 0.6px;
+  color: #ffd94d;
+  background: rgba(10, 18, 38, 0.55);
+  border: 1px solid rgba(255, 203, 5, 0.35);
+  border-radius: 999px;
+  padding: 4px 11px;
+  cursor: pointer;
+}
+
+.series-score:hover { border-color: rgba(255, 203, 5, 0.7); }
+
+/* Games-per-run picker: one value, two homes (setup card + versus column). */
+.games-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 700 9.5px/1 var(--sans);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.games-pick select {
+  appearance: none;
+  font: 700 11px/1 var(--mono);
+  color: #ffd94d;
+  background: rgba(10, 18, 38, 0.55);
+  border: 1px solid rgba(255, 203, 5, 0.35);
+  border-radius: 999px;
+  padding: 4px 10px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.games-pick select:hover { border-color: rgba(255, 203, 5, 0.7); }
+
+/* Setup-card home of the same control: a labeled row of one-click counts. */
+.games-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 2px 0 12px;
+}
+
+.games-row-label {
+  font: 700 10.5px/1 var(--sans);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.games-seg {
+  display: inline-flex;
+  gap: 3px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px;
+}
+
+.games-seg-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: 700 12px/1 var(--sans);
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.games-seg-btn:hover { color: var(--ink); }
+
+.games-seg-btn[aria-pressed="true"] {
+  background: var(--poke-yellow);
+  color: var(--ink);
+  box-shadow: inset 0 -2px 0 rgba(28, 43, 74, 0.18);
+}
+
+/* Copy-the-transcript chip: the shareable text record of the last game. */
+.copy-transcript {
+  appearance: none;
+  font: 700 10.5px/1 var(--mono);
+  letter-spacing: 0.4px;
+  color: #c8d8ef;
+  background: rgba(10, 18, 38, 0.55);
+  border: 1px solid rgba(200, 216, 239, 0.3);
+  border-radius: 999px;
+  padding: 5px 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+
+.copy-transcript:hover { color: #ffffff; border-color: rgba(255, 255, 255, 0.6); }
 
 .turn-ring label {
   font-size: 9px;
@@ -310,7 +550,6 @@ main {
 @media (prefers-reduced-motion: reduce) {
   .status-pill[data-status="running"]::before { animation: none; }
   .winner-banner { animation: none !important; }
-  body.theater .battle-screen { animation: none !important; }
   .step.just-unlocked { animation: none !important; }
 }
 .status-pill[data-status="paused"] { color: var(--gold); border-color: rgba(184, 134, 11, 0.4); }
@@ -394,7 +633,24 @@ main {
   flex-direction: column;
   gap: 14px;
   text-align: left;
+  position: relative;
 }
+
+/* The pathway: a lit rail connecting key → models → battle, so the card
+   reads as one journey. Runs behind the numbered balls. */
+.pipeline::before {
+  content: "";
+  position: absolute;
+  left: 32px;
+  top: 30px;
+  bottom: 30px;
+  width: 3px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--poke-yellow), rgba(255, 203, 5, 0.35), var(--line-soft));
+  opacity: 0.65;
+}
+
+.step { position: relative; z-index: 1; }
 
 .step {
   border: 1px solid var(--line-soft);
@@ -763,7 +1019,9 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
 .dock-note {
   font-size: 12.5px;
   color: var(--text-faint);
-  margin-top: 12px;
+  margin: 12px auto 0;
+  max-width: 720px;
+  text-align: center;
 }
 
 .dock-note:empty { display: none; }
@@ -780,8 +1038,8 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
 
 /* The battle screen is a console: navy bezel, dark glass, rounded shell.
    The light site chrome and the dark native client meet here on purpose. */
-.battle-screen {
-  max-width: 1000px;
+.client-card.battle-screen {
+  max-width: 1360px;
   width: 100%;
   margin: 0 auto;
   background: var(--bezel);
@@ -791,7 +1049,7 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
   box-shadow: 0 18px 44px rgba(28, 43, 74, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
-.battle-screen > header {
+.client-card.battle-screen > header {
   background: transparent;
   border-bottom: 0;
   padding: 11px 8px 9px;
@@ -803,17 +1061,6 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
 .battle-screen .viewport {
   border-radius: 14px;
   overflow: hidden;
-}
-
-.pads {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
-  gap: 16px;
-  align-items: start;
-}
-
-@media (max-width: 1000px) {
-  .pads { grid-template-columns: 1fr; }
 }
 
 .client-card .dot.neutral { background: var(--poke-yellow); box-shadow: 0 0 8px rgba(255, 203, 5, 0.8); }
@@ -886,11 +1133,56 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
 
 .viewport iframe {
   border: 0;
-  width: 956px;
+  /* The client canvas: P1 mind (310) + battle field (640) + P2 mind (310).
+     Keep in sync with CLIENT_BASE_WIDTH in arena.js. */
+  width: 1260px;
   height: 760px;
   transform-origin: top left;
-  transform: scale(var(--client-scale, 1));
+  transform: scale(var(--client-scale, 1)) translateX(var(--client-shift, 0px));
   display: block;
+}
+
+.mobile-focus-switch {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .mobile-focus-switch:not(.hidden) {
+    position: fixed;
+    bottom: 12px;
+    left: 50%;
+    z-index: 61;
+    display: flex;
+    overflow: hidden;
+    transform: translateX(-50%);
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    border-radius: 999px;
+    background: rgba(10, 14, 26, 0.9);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  }
+
+  .mobile-focus-switch button {
+    appearance: none;
+    min-width: 82px;
+    border: 0;
+    border-right: 1px solid rgba(255, 255, 255, 0.14);
+    background: transparent;
+    padding: 10px 12px;
+    color: #9fb0cc;
+    font: 800 11px/1 var(--sans);
+  }
+
+  .mobile-focus-switch button:last-child { border-right: 0; }
+  .mobile-focus-switch button[aria-pressed="true"] { background: #ffcb05; color: #17233e; }
+
+  body.mobile-stage .controls-overlay {
+    left: 0;
+  }
+
+  body.mobile-stage[data-mobile-focus="p1"] .controls-overlay,
+  body.mobile-stage[data-mobile-focus="p2"] .controls-overlay {
+    visibility: hidden;
+  }
 }
 
 /* ---------- bring-your-own-key panel ---------- */
@@ -1004,9 +1296,11 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
 /* ---------- native stage: one full client + alternating controls ---------- */
 
 /* The stage is a broadcast: the models play headlessly, presses are animated
-   re-enactments, so the embedded client must never accept real user clicks. */
+   re-enactments. The frame itself guards the battle against real clicks
+   (.ps-room takes no pointer events in minds mode) — the iframe stays
+   interactive only so the in-client Model Mind columns can scroll. */
 .native-stage iframe {
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .native-stage {
@@ -1034,7 +1328,8 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
    always fully covered while the field and log stay untouched. */
 .controls-overlay {
   position: absolute;
-  left: 0;
+  /* The field column starts after P1's in-client mind column (310px). */
+  left: calc(var(--client-scale, 1) * 310px);
   /* --deck-top is MEASURED from the live client (the adapter reports the
      battle field's bottom edge); 361px is only the pre-measurement
      fallback. The deck fills from that seam to the client's bottom edge. */
@@ -1082,6 +1377,109 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
   background: linear-gradient(180deg, #1a2740, #131d34);
   font-family: var(--sans);
   overflow: hidden;
+}
+
+/* The deck's status chip gets its own row (order: -1 puts it first in the
+   flex column) so it never covers a Pokémon name or a move button. */
+.deck-state {
+  order: -1;
+  align-self: flex-end;
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid rgba(219, 230, 245, 0.28);
+  border-radius: 999px;
+  background: rgba(9, 15, 30, 0.84);
+  padding: 5px 9px;
+  color: #9fb0cc;
+  font: 700 9px/1 var(--mono);
+  letter-spacing: 0.4px;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* ---------- human mode: the deck IS the controls ---------- */
+
+.deck-host.human-live { pointer-events: auto; }
+
+.deck-host.human-live .deck-move,
+.deck-host.human-live .deck-switch,
+.deck-host.human-live .deck-tera,
+.deck-host.human-live .deck-target,
+.deck-host.human-live .deck-pass,
+.deck-host.human-live .deck-undo { cursor: pointer; }
+
+.deck-host.human-live .deck-move:hover,
+.deck-host.human-live .deck-switch:hover {
+  filter: brightness(1.12);
+  outline: 2px solid rgba(255, 203, 5, 0.8);
+  outline-offset: -2px;
+}
+
+.deck-host.human-live .deck-tera:hover,
+.deck-host.human-live .deck-target:hover { filter: brightness(1.18); }
+
+.deck-state.your-turn {
+  border-color: rgba(255, 203, 5, 0.8);
+  background: rgba(59, 45, 5, 0.92);
+  color: #ffd94d;
+  animation: your-turn-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes your-turn-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 203, 5, 0.0); }
+  50% { box-shadow: 0 0 12px 2px rgba(255, 203, 5, 0.45); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .deck-state.your-turn { animation: none; }
+}
+
+.deck-human-bar {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  padding: 2px 0;
+}
+
+.deck-pass,
+.deck-undo {
+  appearance: none;
+  border: 1px solid rgba(219, 230, 245, 0.35);
+  border-radius: 999px;
+  background: rgba(9, 15, 30, 0.84);
+  color: #c8d8ef;
+  font: 700 10px/1 var(--mono);
+  letter-spacing: 0.4px;
+  padding: 6px 12px;
+  text-transform: uppercase;
+}
+
+.deck-pass:hover,
+.deck-undo:hover { color: #ffffff; border-color: rgba(255, 255, 255, 0.6); }
+
+.deck-state.committed {
+  border-color: rgba(255, 203, 5, 0.75);
+  color: #ffd94d;
+  box-shadow: 0 0 12px rgba(255, 203, 5, 0.24);
+}
+
+/* Legal options are NOT decisions: while the model thinks (or its analysis
+   is presenting), the choice space reads as a quiet menu. Full color and
+   glow arrive only when the decision is locked and the press begins. */
+.deck[data-state="available"] .deck-move,
+.deck[data-state="available"] .deck-switch,
+.deck[data-state="available"] .deck-tera {
+  filter: saturate(0.55) brightness(0.9);
+  transition: filter 260ms ease;
+}
+
+.deck[data-state="committed"] .deck-move,
+.deck[data-state="committed"] .deck-switch,
+.deck[data-state="committed"] .deck-tera {
+  filter: none;
+  transition: filter 260ms ease;
 }
 
 /* The seam: a thin lit line in the acting player's color, glowing into the
@@ -1163,6 +1561,31 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* HP bars on deck cards (the in-client Model Minds carry their own copy in
+   mind-card.css). */
+.mon-hp {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line-soft);
+  margin: 5px 0 4px;
+  overflow: hidden;
+}
+
+.mon-hp i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--green);
+  transition: width 500ms ease;
+}
+
+.mon-hp.mid i { background: #e0a41b; }
+.mon-hp.low i { background: var(--red); }
+
+@media (prefers-reduced-motion: reduce) {
+  .mon-hp i { transition: none; }
 }
 
 .deck .mon-hp {
@@ -1395,18 +1818,7 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
   .deck-ripple { animation: none; opacity: 0; }
 }
 
-.stage-placeholder {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12.5px;
-  color: rgba(219, 230, 245, 0.55);
-  text-align: center;
-  padding: 0 30px;
-  pointer-events: none;
-}
+
 
 /* ---------- theater mode: nothing but the native client ---------- */
 
@@ -1428,797 +1840,14 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
 
 .theater-btn.on { color: var(--poke-yellow); border-color: rgba(255, 203, 5, 0.6); }
 
-#theater-sound {
-  position: fixed;
-  top: 14px;
-  right: 178px;
-  z-index: 60;
-  appearance: none;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(10, 14, 26, 0.72);
-  color: rgba(231, 236, 243, 0.65);
-  font-size: 13px;
-  opacity: 0.5;
-  transition: opacity 200ms ease, color 200ms ease;
-}
+/* Header control buttons share .theater-btn styling; only their state
+   accents live here. */
+#theater-pause:disabled,
+#theater-stop:disabled { opacity: 0.35; cursor: default; }
+#theater-remix.spinning { transform: rotate(360deg); color: var(--poke-yellow); }
+#theater-remix { transition: transform 300ms ease, color 200ms ease, border-color 200ms ease; }
 
-#theater-sound:hover { opacity: 1; color: #ffffff; }
-#theater-sound.on { color: var(--poke-yellow); }
 
-body.theater { overflow: hidden; }
 
-body.theater .topbar,
-body.theater .matchup,
-body.theater .control-dock,
-body.theater .ticker,
-body.theater .replay-bar,
-body.theater .transport,
-body.theater .site-footer,
-body.theater .site-disclaimer {
-  display: none !important;
-}
 
-/* The intro floats over the idle stage and yields when a battle starts. */
-body.theater .setup-card {
-  position: fixed;
-  left: 50%;
-  top: 48%;
-  transform: translate(-50%, -50%);
-  z-index: 56;
-  width: min(92vw, 780px);
-  max-height: 88vh;
-  overflow-y: auto;
-  margin: 0;
-  box-shadow: 0 34px 90px rgba(0, 0, 0, 0.55);
-  animation: intro-in 560ms cubic-bezier(0.2, 0.9, 0.3, 1);
-}
 
-@keyframes intro-in {
-  from { opacity: 0; transform: translate(-50%, -46%) scale(0.96); }
-  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-}
-
-/* The winner takes the marquee, floating over the theater. */
-body.theater .winner-banner {
-  position: fixed;
-  top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 57;
-  margin: 0;
-  min-width: min(90vw, 420px);
-  background: linear-gradient(180deg, #ffd94d, var(--poke-yellow));
-  color: var(--ink);
-  border-color: rgba(28, 43, 74, 0.35);
-  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.5), 0 0 40px rgba(255, 203, 5, 0.3);
-}
-
-/* ---- Model Minds flanking the stage: the thinking is part of the show ---- */
-
-@media (min-width: 1160px) {
-  body.theater .pads { display: contents; }
-
-  body.theater .pad-card {
-    position: fixed;
-    top: 50%;
-    transform: translateY(-50%);
-    width: min(23vw, 380px);
-    max-height: 85vh;
-    overflow-y: auto;
-    z-index: 55;
-    background: rgba(15, 22, 41, 0.94);
-    border: 1px solid rgba(122, 152, 204, 0.22);
-    border-radius: 16px;
-    box-shadow: 0 18px 54px rgba(0, 0, 0, 0.5);
-    scrollbar-width: thin;
-    scrollbar-color: rgba(140, 165, 205, 0.35) transparent;
-  }
-
-  body.theater .pad-card[data-side="p1"] { left: 14px; border-top: 3px solid rgba(227, 53, 13, 0.7); }
-  body.theater .pad-card[data-side="p2"] { right: 14px; border-top: 3px solid rgba(90, 168, 232, 0.75); }
-
-  /* Dark-glass variants of the mind internals. */
-  body.theater .pad-card > header {
-    background: transparent;
-    border-bottom-color: rgba(255, 255, 255, 0.08);
-  }
-
-  body.theater .pad-card .who { color: #e8f0fb; }
-  body.theater .pad-card .role-tag { color: #7e93b8; }
-
-  body.theater .pad-card .action-chip {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.12);
-    color: #a9bcd9;
-  }
-
-  body.theater .pad-card .mind { border-top-color: rgba(255, 255, 255, 0.08); }
-  body.theater .pad-card .mind-head h3 { color: #8fa7cc; }
-  body.theater .pad-card .mind-meta { color: #7e93b8; }
-  body.theater .pad-card .thinking { color: #a9bcd9; }
-
-  body.theater .pad-card .mind-board {
-    background: rgba(255, 255, 255, 0.045);
-    border-color: rgba(255, 255, 255, 0.09);
-  }
-
-  body.theater .pad-card .board-label { color: #9db4d8; }
-  body.theater .pad-card .board-count,
-  body.theater .pad-card .board-empty { color: #7e93b8; }
-  body.theater .pad-card .board-field { color: #a9bcd9; }
-
-  body.theater .pad-card .mon-chip {
-    background: #17233d;
-    border-color: rgba(255, 255, 255, 0.1);
-  }
-
-  body.theater .pad-card .mon-chip .mon-name b { color: #e8f0fb; }
-  body.theater .pad-card .mon-chip .mon-detail { color: #7e93b8; }
-  body.theater .pad-card .mon-hp { background: rgba(255, 255, 255, 0.14); }
-
-  body.theater .pad-card .mind-section {
-    background: #131e36;
-    border-color: rgba(255, 255, 255, 0.09);
-    box-shadow: none;
-  }
-
-  body.theater .pad-card .mind-section h4 { color: #dbe6f5; }
-  body.theater .pad-card .mind-section li { color: #a9bcd9; }
-  body.theater .pad-card .mind-section li.chosen-candidate { color: #ffffff; }
-
-  body.theater .pad-card .mind-raw {
-    background: #101a30;
-    border-color: rgba(255, 255, 255, 0.08);
-  }
-
-  body.theater .pad-card .mind-raw summary { color: #7e93b8; }
-  body.theater .pad-card .mind-raw pre { color: #a9bcd9; }
-
-  body.theater .pad-card .mind-choice { border-top-color: rgba(255, 255, 255, 0.1); }
-  body.theater .pad-card .mind-choice .choice-label { color: #a9bcd9; }
-}
-
-@media (max-width: 1159.98px) {
-  body.theater .pads { display: none !important; }
-}
-
-body.theater .battle-screen {
-  animation: theater-in 240ms ease-out;
-  position: fixed;
-  inset: 0;
-  max-width: none;
-  margin: 0;
-  border: 0;
-  border-radius: 0;
-  padding: 0;
-  background: #0b1020;
-  z-index: 50;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: none;
-}
-
-@keyframes theater-in {
-  from { opacity: 0.4; }
-  to { opacity: 1; }
-}
-
-body.theater .battle-screen > header { display: none; }
-
-body.theater .battle-screen .viewport {
-  flex: none;
-  background: transparent;
-  border-radius: 0;
-}
-
-/* The single button that brings the whole dashboard back. */
-#theater-exit {
-  position: fixed;
-  top: 14px;
-  right: 16px;
-  z-index: 60;
-  appearance: none;
-  border-radius: 999px;
-  border: 1.5px solid rgba(255, 203, 5, 0.55);
-  background: rgba(10, 14, 26, 0.78);
-  color: var(--poke-yellow);
-  font: 800 12px/1 var(--sans);
-  padding: 10px 16px;
-  cursor: pointer;
-  opacity: 0.8;
-  transition: opacity 200ms ease, box-shadow 200ms ease;
-}
-
-#theater-exit:hover { opacity: 1; box-shadow: 0 0 0 4px rgba(255, 203, 5, 0.2); }
-
-#theater-hint {
-  position: fixed;
-  bottom: 26px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 60;
-  font: 600 11.5px/1 var(--sans);
-  color: rgba(231, 236, 243, 0.85);
-  background: rgba(10, 14, 26, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 999px;
-  padding: 9px 16px;
-  pointer-events: none;
-  animation: hint-fade 6s ease forwards;
-}
-
-@keyframes hint-fade {
-  0% { opacity: 0; transform: translate(-50%, 8px); }
-  10%, 75% { opacity: 1; transform: translate(-50%, 0); }
-  100% { opacity: 0; transform: translate(-50%, 0); }
-}
-
-/* ---------- mind card ---------- */
-
-.mind {
-  border-top: 1px solid var(--line-soft);
-  padding: 12px 14px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  min-height: 130px;
-}
-
-.mind .mind-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.mind .mind-head h3 {
-  margin: 0;
-  font-size: 11px;
-  letter-spacing: 1.4px;
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
-
-.mind .mind-meta {
-  margin-left: auto;
-  font: 500 10.5px/1 var(--mono);
-  color: var(--text-faint);
-}
-
-.mind .thinking {
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.mind .thinking .shimmer {
-  display: inline-block;
-  background: linear-gradient(90deg, var(--text-faint), var(--ink), var(--text-faint));
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: shimmer 1.6s linear infinite;
-}
-
-@keyframes shimmer {
-  to { background-position: -200% 0; }
-}
-
-/* Known-context board: what this player can actually see. */
-
-.mind-board {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border: 1.5px solid var(--line-soft);
-  border-radius: 14px;
-  background: var(--card-strong);
-  padding: 10px 12px;
-}
-
-.board-row .board-label {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  font: 800 10px/1 var(--sans);
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  margin-bottom: 6px;
-}
-
-.board-row .board-icon { font-size: 12px; }
-
-.board-row .board-count {
-  margin-left: auto;
-  font: 600 10px/1 var(--mono);
-  color: var(--text-faint);
-  text-transform: none;
-  letter-spacing: 0;
-}
-
-.board-strip {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
-  gap: 6px;
-}
-
-.board-empty {
-  grid-column: 1 / -1;
-  font-size: 11px;
-  color: var(--text-faint);
-  font-style: italic;
-  padding: 2px 0;
-}
-
-.mon-chip {
-  border: 1px solid var(--line-soft);
-  border-radius: 10px;
-  background: var(--card);
-  padding: 6px 8px 7px;
-  min-width: 0;
-}
-
-.mon-chip.on-field { border-color: var(--poke-yellow); box-shadow: 0 0 0 2px rgba(255, 203, 5, 0.22); }
-.mon-chip.fainted { opacity: 0.5; filter: saturate(0.3); }
-
-.mon-chip .mon-name {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-
-.mon-chip .mon-name b {
-  font-size: 11px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.mon-badge {
-  flex: none;
-  font: 800 7.5px/1 var(--sans);
-  letter-spacing: 0.5px;
-  border-radius: 4px;
-  padding: 2px 4px;
-}
-
-.mon-badge.field { background: rgba(255, 203, 5, 0.3); color: var(--ink); }
-.mon-badge.status { background: rgba(214, 59, 59, 0.15); color: var(--red); }
-.mon-badge.tera { background: linear-gradient(90deg, rgba(227, 53, 13, 0.2), rgba(42, 117, 187, 0.2)); color: var(--ink); }
-
-.mon-hp {
-  height: 5px;
-  border-radius: 3px;
-  background: var(--line-soft);
-  margin: 5px 0 4px;
-  overflow: hidden;
-}
-
-.mon-hp i {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
-  background: var(--green);
-  transition: width 500ms ease;
-}
-
-.mon-hp.mid i { background: #e0a41b; }
-.mon-hp.low i { background: var(--red); }
-
-.mon-chip .mon-detail {
-  font: 500 9.5px/1.35 var(--mono);
-  color: var(--text-faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.board-field {
-  font: 600 10.5px/1 var(--sans);
-  color: var(--text-dim);
-}
-
-/* Thought-process cards: one cartoon box per question. */
-
-.mind-sections {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-@media (max-width: 700px) {
-  .mind-sections { grid-template-columns: 1fr; }
-}
-
-.mind-section {
-  min-width: 0;
-  border: 1.5px solid var(--line-soft);
-  border-radius: 12px;
-  background: var(--card);
-  padding: 8px 11px 9px;
-  box-shadow: 0 2px 6px rgba(28, 43, 74, 0.05);
-}
-
-.mind-section h4 {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0 0 4px;
-  font-size: 10.5px;
-  letter-spacing: 0.3px;
-  color: var(--text);
-  font-weight: 800;
-}
-
-.mind-section h4 .section-icon { font-size: 12px; }
-
-.client-card[data-side="p1"] .mind-section { border-top: 3px solid rgba(227, 53, 13, 0.45); }
-.client-card[data-side="p2"] .mind-section { border-top: 3px solid rgba(42, 117, 187, 0.5); }
-
-/* Fresh decisions pop their cards in one after another. */
-.pop-in {
-  animation: mind-pop 420ms cubic-bezier(0.2, 0.9, 0.3, 1.15) both;
-}
-
-@keyframes mind-pop {
-  from { opacity: 0; transform: translateY(8px) scale(0.94); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .pop-in { animation: none; }
-  .mon-hp i { transition: none; }
-}
-
-.mind-section ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.mind-section li {
-  font-size: 11.5px;
-  color: var(--text-dim);
-  padding: 1px 0;
-  overflow-wrap: anywhere;
-}
-
-.mind-section li.chosen-candidate {
-  color: var(--text);
-}
-
-.pad-card[data-side="p1"] .mind-section li.chosen-candidate { color: var(--p1); }
-.pad-card[data-side="p2"] .mind-section li.chosen-candidate { color: var(--p2); }
-
-.mind-raw {
-  border-top: 1px dashed var(--line-soft);
-  padding-top: 7px;
-  margin-top: 2px;
-}
-
-.mind-raw summary {
-  cursor: pointer;
-  font: 700 10px/1.4 var(--mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-
-.mind-raw summary:hover { color: var(--text); }
-
-.mind-raw pre {
-  margin: 6px 0 2px;
-  max-height: 260px;
-  overflow: auto;
-  font: 400 11px/1.5 var(--mono);
-  color: var(--text-dim);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  background: rgba(0, 0, 0, 0.04);
-  border-radius: 8px;
-  padding: 8px 10px;
-}
-
-.mind-choice {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  border-top: 1px dashed var(--line-soft);
-  padding-top: 9px;
-}
-
-.mind-choice .choice-chip {
-  font: 700 13px/1.2 var(--mono);
-  padding: 7px 12px;
-  border-radius: 9px;
-  border: 1.5px solid;
-  white-space: nowrap;
-}
-
-.client-card[data-side="p1"] .choice-chip {
-  color: var(--p1);
-  border-color: rgba(227, 53, 13, 0.5);
-  background: var(--p1-soft);
-}
-
-.client-card[data-side="p2"] .choice-chip {
-  color: var(--p2);
-  border-color: rgba(42, 117, 187, 0.5);
-  background: var(--p2-soft);
-}
-
-.mind-choice .choice-label {
-  font-size: 11.5px;
-  color: var(--text-dim);
-  flex: 1;
-  min-width: 160px;
-}
-
-.mind-choice .invalid {
-  color: var(--red);
-  font: 600 11px/1 var(--mono);
-}
-
-/* ---------- ticker ---------- */
-
-.ticker {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  padding: 12px 2px 4px;
-  scrollbar-width: none;
-  mask-image: linear-gradient(90deg, transparent, black 24px, black calc(100% - 24px), transparent);
-  -webkit-mask-image: linear-gradient(90deg, transparent, black 24px, black calc(100% - 24px), transparent);
-}
-
-.ticker::-webkit-scrollbar { display: none; }
-
-.ticker .tick {
-  flex: none;
-  font: 500 11px/1.4 var(--mono);
-  color: var(--text-faint);
-  border-radius: 8px;
-  padding: 5px 10px;
-  background: var(--card);
-  border: 1px solid var(--line-soft);
-  max-width: 380px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.ticker .tick b { font-weight: 700; }
-.ticker .tick.p1 b { color: var(--p1); }
-.ticker .tick.p2 b { color: var(--p2); }
-
-/* ---------- replay picker & transport ---------- */
-
-.replay-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin: 14px 0 10px;
-}
-
-.replay-bar h2 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 800;
-}
-
-.replay-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.replay-card {
-  appearance: none;
-  text-align: left;
-  background: var(--card);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius);
-  padding: 12px 14px;
-  color: var(--text);
-  font-family: var(--sans);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  transition: border-color 150ms ease, box-shadow 150ms ease;
-  box-shadow: 0 2px 8px rgba(28, 43, 74, 0.05);
-}
-
-.replay-card:hover { border-color: var(--line); box-shadow: 0 4px 14px rgba(28, 43, 74, 0.10); }
-
-.replay-card.selected {
-  border-color: var(--poke-yellow);
-  box-shadow: 0 0 0 3px rgba(255, 203, 5, 0.25);
-}
-
-.replay-card .rc-match {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  font-size: 12.5px;
-  font-weight: 700;
-  min-width: 0;
-}
-
-.replay-card .rc-name {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 44%;
-}
-
-.replay-card .rc-name.p1 { color: var(--p1); }
-.replay-card .rc-name.p2 { color: var(--p2); }
-.replay-card .rc-name.won::after { content: " \1F451"; font-size: 10px; }
-.replay-card .rc-vs { color: var(--text-faint); font-size: 10px; font-weight: 400; }
-
-.replay-card .rc-meta {
-  font: 500 10.5px/1.4 var(--mono);
-  color: var(--text-faint);
-}
-
-.replay-empty-note {
-  grid-column: 1 / -1;
-  text-align: center;
-  color: var(--text-faint);
-  font-size: 12.5px;
-  padding: 26px 0;
-}
-
-.replay-practice-toggle {
-  grid-column: 1 / -1;
-  appearance: none;
-  border: 1px dashed var(--line);
-  background: transparent;
-  color: var(--text-faint);
-  font: 600 11.5px/1 var(--sans);
-  border-radius: var(--radius);
-  padding: 12px;
-  transition: color 150ms ease, border-color 150ms ease;
-}
-
-.replay-practice-toggle:hover { color: var(--text-dim); border-color: var(--ink); }
-
-.replay-empty {
-  font-size: 13.5px;
-  color: var(--text-faint);
-  padding: 30px 0;
-  text-align: center;
-}
-
-.transport {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: var(--card);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius);
-  padding: 10px 14px;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-  box-shadow: 0 2px 10px rgba(28, 43, 74, 0.06);
-}
-
-.transport .t-btn {
-  appearance: none;
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
-  border: 1.5px solid var(--line);
-  background: var(--card);
-  color: var(--text);
-  font-size: 15px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.transport .t-btn:hover { border-color: var(--ink); }
-.transport .t-btn:disabled { opacity: 0.35; cursor: default; }
-
-.transport .t-btn.play {
-  width: 46px;
-  height: 46px;
-  border: 0;
-  background: linear-gradient(180deg, #ffd94d, var(--poke-yellow));
-  font-size: 17px;
-  color: var(--ink);
-  box-shadow: 0 3px 0 var(--poke-yellow-deep);
-}
-
-.speed-group {
-  display: flex;
-  gap: 3px;
-  background: var(--bg-soft);
-  border: 1px solid var(--line-soft);
-  border-radius: 999px;
-  padding: 3px;
-}
-
-.speed-group button {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  color: var(--text-faint);
-  font: 700 11.5px/1 var(--mono);
-  border-radius: 999px;
-  padding: 6px 10px;
-  cursor: pointer;
-}
-
-.speed-group button[aria-pressed="true"] {
-  background: var(--card);
-  color: var(--text);
-  box-shadow: 0 1px 4px rgba(28, 43, 74, 0.15);
-}
-
-.scrub {
-  flex: 1;
-  min-width: 200px;
-  height: 26px;
-  position: relative;
-  cursor: pointer;
-}
-
-.scrub .scrub-track {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 11px;
-  height: 4px;
-  background: var(--line-soft);
-  border-radius: 2px;
-}
-
-.scrub .scrub-fill {
-  position: absolute;
-  left: 0;
-  top: 11px;
-  height: 4px;
-  background: linear-gradient(90deg, var(--p1), var(--p2));
-  border-radius: 2px;
-  width: 0;
-  transition: width 200ms ease;
-}
-
-.scrub .scrub-dot {
-  position: absolute;
-  top: 8px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--card);
-  border: 1.5px solid var(--text-faint);
-  transform: translateX(-50%);
-}
-
-.scrub .scrub-dot.done { border-color: var(--ink); background: var(--text-dim); }
-.scrub .scrub-dot.p1.done { border-color: var(--p1); background: var(--p1); }
-.scrub .scrub-dot.p2.done { border-color: var(--p2); background: var(--p2); }
-.scrub .scrub-dot:hover { transform: translateX(-50%) scale(1.35); }
-
-.transport .t-pos {
-  font: 500 11.5px/1.3 var(--mono);
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-
-.replay-loading {
-  text-align: center;
-  color: var(--text-faint);
-  padding: 26px 0;
-  font-size: 13.5px;
-}

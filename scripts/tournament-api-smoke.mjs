@@ -51,13 +51,11 @@ async function run() {
     assert(final.currentPair === 3, 'tournament did not record all pairs');
     assert(final.completedBattles === 3, 'tournament did not record all battles');
     assert(final.summaryPath && final.summaryHref, 'tournament missing summary path');
-    assert(final.ratingStorePath, 'tournament missing rating store path');
 
     const summary = JSON.parse(await fs.readFile(final.summaryPath, 'utf8'));
     assert(summary.schemaVersion === 'showdown-tournament-summary.v1', 'wrong summary schema');
     assert(summary.pairs.length === 3, 'summary missing pairs');
     assert(summary.completedBattles === 3, 'summary missing battles');
-    JSON.parse(await fs.readFile(final.ratingStorePath, 'utf8'));
 
     clearTimeout(timeout);
     console.log(JSON.stringify({
@@ -66,7 +64,6 @@ async function run() {
       currentPair: final.currentPair,
       completedBattles: final.completedBattles,
       summaryPath: final.summaryPath,
-      ratingStorePath: final.ratingStorePath,
     }, null, 2));
     server.kill();
     process.exit(0);

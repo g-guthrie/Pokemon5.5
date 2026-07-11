@@ -50,7 +50,6 @@ async function run() {
     assert(final.status === 'finished', `ladder did not finish cleanly: ${final.status}`);
     assert(final.currentBattle === 1, 'ladder did not record one battle');
     assert(final.summaryPath && final.summaryHref, 'ladder missing summary path');
-    assert(final.ratingStorePath, 'ladder missing rating store path');
 
     const summary = JSON.parse(await fs.readFile(final.summaryPath, 'utf8'));
     assert(summary.schemaVersion === 'showdown-ladder-summary.v1', 'wrong summary schema');
@@ -58,7 +57,6 @@ async function run() {
     assert(summary.battles.length === 1, 'summary missing battle');
     assert(summary.battles[0].battleId === 'local', 'watched ladder should use local battle');
     assert(summary.battles[0].eventsPath, 'battle missing event artifact');
-    JSON.parse(await fs.readFile(final.ratingStorePath, 'utf8'));
 
     clearTimeout(timeout);
     console.log(JSON.stringify({
@@ -67,7 +65,6 @@ async function run() {
       currentBattle: final.currentBattle,
       winnerAgent: summary.battles[0].winnerAgent,
       summaryPath: final.summaryPath,
-      ratingStorePath: final.ratingStorePath,
     }, null, 2));
     server.kill();
     process.exit(0);

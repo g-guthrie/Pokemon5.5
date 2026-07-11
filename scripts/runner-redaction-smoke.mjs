@@ -49,7 +49,6 @@ async function run() {
           provider: 'openai',
           model: `bad-model-${keyLike}`,
           name: `bad-name-${keyLike}`,
-          ratingKey: `bad-rating-${keyLike}`,
         },
         p2: {provider: 'standin', name: 'runner-redaction-p2'},
       },

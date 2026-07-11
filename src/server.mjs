@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {WebSocketServer} from 'ws';
-import {sanitizeText} from './agent-runtime.mjs';
+import {REQUIRED_ANALYSIS_FIELDS, sanitizeText} from './agent-runtime.mjs';
 import {BattleSession} from './battle-session.mjs';
 import {moveCard, speciesCard} from './dex-context.mjs';
 import {
@@ -13,7 +13,10 @@ import {
 } from './benchmark-suite.mjs';
 import {runLadderBatch} from './ladder-runner.mjs';
 import {runWebSocketMatch} from './match-runner.mjs';
+import {getSeries, loadSeriesStore, recordSeriesGame, resetSeries, saveSeriesStore} from './series-store.mjs';
 import {runTournamentBatch} from './tournament-runner.mjs';
+import {transcriptFromMatchArtifact, transcriptPathForArtifact} from './transcript.mjs';
+import {mergeUsageSummaries, summarizeUsage} from './usage-summary.mjs';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const publicDir = path.join(rootDir, 'public');
@@ -23,20 +26,45 @@ const assetCacheDir = path.join(rootDir, 'artifacts', 'asset-cache');
 const remoteAssetOrigin = 'https://play.pokemonshowdown.com';
 const port = Number(process.env.PORT || 3107);
 const DEFAULT_BATTLE_ID = 'local';
+const DEFAULT_FORMAT = 'gen9randomdoublesbattle';
 
 const battleSessions = new Map();
 const clients = new Map();
+// One running record per (session, exact model pairing): every finished game
+// rolls in, whether it came from a single start or a multi-game run.
+const seriesStorePath = path.join(artifactsDir, 'series-store.json');
+let seriesStoreQueue = Promise.resolve();
 // Visitor-session runs: sessionId -> run. The '' key is the legacy operator
 // slot (battle 'local', no session), which CLI smokes and the operator page
 // use unchanged.
 const liveRuns = new Map();
 const MAX_CONCURRENT_RUNS = clampNumber(process.env.MAX_CONCURRENT_RUNS, 1, 16, 3);
+const MAX_BATTLE_SESSIONS = clampNumber(process.env.MAX_BATTLE_SESSIONS, 10, 10000, 300);
+const BATTLE_SESSION_IDLE_MS = clampNumber(process.env.BATTLE_SESSION_IDLE_MS, 60000, 86400000, 3600000);
+const MAX_COMPLETED_LIVE_RUNS = clampNumber(process.env.MAX_COMPLETED_LIVE_RUNS, 20, 5000, 250);
+const LIVE_RUN_RETENTION_MS = clampNumber(process.env.LIVE_RUN_RETENTION_MS, 60000, 604800000, 86400000);
 let ladderRun = null;
 let tournamentRun = null;
 let benchmarkRun = null;
+let benchmarkTransition = null;
 getBattle(DEFAULT_BATTLE_ID);
 
 const server = http.createServer((req, res) => {
+  // A synchronous throw here (malformed percent-encoding in the URL, a
+  // battle-session cap, anything unexpected) must answer 400, never kill the
+  // whole public server.
+  try {
+    handleHttpRequest(req, res);
+  } catch (error) {
+    if (!res.headersSent) {
+      sendJson(res, {ok: false, error: sanitizeText(error?.message || 'Bad request')}, 400);
+    } else {
+      res.end();
+    }
+  }
+});
+
+function handleHttpRequest(req, res) {
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   if (url.pathname === '/api/state') {
     const battle = getBattleFromUrl(url);
@@ -73,12 +101,12 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
-  if (url.pathname === '/api/artifacts') {
-    void listArtifacts(res);
+  if (url.pathname === '/api/series' && req.method === 'GET') {
+    void handleSeriesGetRequest(res, url);
     return;
   }
-  if (url.pathname === '/api/replays') {
-    void listReplays(res, normalizeSessionId(url.searchParams.get('session')));
+  if (url.pathname === '/api/series' && req.method === 'POST') {
+    void handleSeriesPostRequest(req, res);
     return;
   }
   if (url.pathname === '/api/models') {
@@ -149,7 +177,7 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (url.pathname.startsWith('/ps/')) {
-    serveStaticFrom(showdownClientDir, url.pathname.slice('/ps'.length), res);
+    serveStaticFrom(showdownClientDir, url.pathname.slice('/ps'.length), res, 'public, max-age=3600');
     return;
   }
   if (isShowdownAssetPath(url.pathname)) {
@@ -157,21 +185,42 @@ const server = http.createServer((req, res) => {
     return;
   }
   serveStatic(url.pathname, res);
-});
+}
 
 const wss = new WebSocketServer({server, path: '/ws'});
 
 wss.on('connection', (ws, req) => {
+  try {
+    handleWsConnection(ws, req);
+  } catch (error) {
+    send(ws, {type: 'error', error: sanitizeText(error?.message || error)});
+    ws.close();
+  }
+});
+
+function handleWsConnection(ws, req) {
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const role = normalizeRole(url.searchParams.get('role'));
   const battleId = normalizeBattleId(url.searchParams.get('battleId') || url.searchParams.get('battle'));
-  const battle = getBattle(battleId);
-  clients.set(ws, {role, battleId});
-  send(ws, {type: 'hello', role, battleId, formatid: battle.formatid, seed: battle.seed});
-  for (const chunk of protocolBacklogFor(battle, role)) {
-    send(ws, {type: 'protocol', role, chunk});
+  const waitForStart = url.searchParams.get('wait') === '1';
+  const battle = battleSessions.get(battleId) || (waitForStart ? null : getBattle(battleId));
+  clients.set(ws, {role, battleId, waitForStart});
+  send(ws, {
+    type: 'hello',
+    role,
+    battleId,
+    formatid: battle?.formatid || DEFAULT_FORMAT,
+    seed: battle?.seed || null,
+    ready: Boolean(battle),
+  });
+  if (battle) {
+    for (const chunk of protocolBacklogFor(battle, role)) {
+      send(ws, {type: 'protocol', role, chunk});
+    }
+    send(ws, {type: 'state', role, state: battle.extractState(role)});
+  } else {
+    send(ws, {type: 'waiting', role, battleId, reason: 'BATTLE_NOT_STARTED'});
   }
-  send(ws, {type: 'state', role, state: battle.extractState(role)});
 
   ws.on('message', message => {
     try {
@@ -184,7 +233,7 @@ wss.on('connection', (ws, req) => {
     clients.delete(ws);
     pruneBattleSessions();
   });
-});
+}
 
 server.listen(port, () => {
   console.log(`Pokemon Showdown benchmark harness running at http://localhost:${port}`);
@@ -280,6 +329,12 @@ async function handleRunRequest(req, res) {
       sendJson(res, {ok: true, run: summarizeLiveRun(liveRun)});
       return;
     }
+    if (command === 'reveal-mind') {
+      if (!liveRun) throw new Error('No run to reveal');
+      liveRun.revealOpponentMind = Boolean(body.reveal);
+      sendJson(res, {ok: true, run: summarizeLiveRun(liveRun)});
+      return;
+    }
     if (command === 'stop') {
       if (!isRunActive(liveRun)) throw new Error('No active run to stop');
       liveRun.status = 'stopping';
@@ -296,6 +351,7 @@ async function handleRunRequest(req, res) {
 }
 
 function startLiveRun(body = {}, sessionId = '') {
+  pruneLiveRuns();
   const existing = liveRuns.get(sessionId);
   if (isRunActive(existing)) throw new Error('You already have a match running — stop it first');
   const activeCount = [...liveRuns.values()].filter(isRunActive).length;
@@ -327,6 +383,15 @@ function startLiveRun(body = {}, sessionId = '') {
     eventsHref: '',
     formatid: typeof body.formatid === 'string' ? body.formatid : 'gen9randomdoublesbattle',
     seed: parseRunSeed(body.seed),
+    // How many games this run plays back-to-back. Every finished game also
+    // rolls into the persistent series for this exact model pairing.
+    gameCount: clampNumber(body.gameCount ?? body.games, 1, 100, 1),
+    currentGame: 0,
+    games: [],
+    series: null,
+    transcriptPath: '',
+    transcriptHref: '',
+    usageTotals: summarizeUsage([]),
     maxTurns: clampNumber(body.maxTurns, 1, 200, 40),
     moveDelayMs: clampNumber(body.moveDelayMs, 0, 5000, 200),
     timeoutMs: clampNumber(body.timeoutMs, 1000, 7200000, 30000),
@@ -334,6 +399,10 @@ function startLiveRun(body = {}, sessionId = '') {
     allowFallback: Boolean(body.allowFallback),
     agentP1: sanitizeAgentSpec(body.agentP1 || body.agents?.p1 || 'standin'),
     agentP2: sanitizeAgentSpec(body.agentP2 || body.agents?.p2 || 'standin'),
+    humanRoles: [],
+    // Human play hides the AI's mind by default; the player may flip this to
+    // peek at the opponent's live thinking (their game, their call).
+    revealOpponentMind: Boolean(body.revealOpponentMind),
     // Visitor-supplied key: memory only. summarizeLiveRun never includes it,
     // and the runner/artifact layers scrub key-shaped strings everywhere.
     providerKeys: normalizeProviderKeys(body),
@@ -356,11 +425,32 @@ function startLiveRun(body = {}, sessionId = '') {
     lastModelCall: null,
     lastModelCalls: [],
     lastActions: [],
+    roleStates: {
+      p1: createLiveRoleState(),
+      p2: createLiveRoleState(),
+    },
     sessionId,
   };
+  // Human play: the visitor drives Player 1 from the decision deck; only one
+  // side can be human and it is always P1 (the stage IS Player 1's client).
+  run.humanRoles = ['p1', 'p2'].filter(role => (role === 'p1' ? run.agentP1 : run.agentP2) === 'human');
+  if (run.agentP2 === 'human') {
+    throw new Error('You play Player 1 — set Player 2 to a model or built-in bot');
+  }
   liveRuns.set(sessionId, run);
   void runLiveMatch(run);
   return run;
+}
+
+function createLiveRoleState() {
+  return {
+    phase: 'idle',
+    turn: null,
+    requestId: null,
+    observationAt: '',
+    decisionAt: '',
+    submittedAt: '',
+  };
 }
 
 async function handleLadderRequest(req, res) {
@@ -407,6 +497,7 @@ function startServerLadder(body = {}) {
   if (isBenchmarkActive(benchmarkRun)) throw new Error(`Benchmark already active: ${benchmarkRun.id}`);
   const id = `ladder-${new Date().toISOString().replace(/[:.]/g, '-')}`;
   const outDir = path.join(artifactsDir, 'browser-ladders', id);
+  const bestOf = normalizeBestOf(body.bestOf);
   const run = {
     id,
     status: body.startPaused ? 'paused' : 'running',
@@ -415,9 +506,8 @@ function startServerLadder(body = {}) {
     outDir,
     summaryPath: path.join(outDir, 'summary-latest.json'),
     summaryHref: '',
-    ratingStorePath: path.join(artifactsDir, 'ratings-store.json'),
-    ratingStoreHref: '/artifacts/ratings-store.json',
-    battleCount: clampNumber(body.battleCount, 1, 100, 2),
+    battleCount: bestOf || clampNumber(body.battleCount, 1, 100, 2),
+    bestOf,
     currentBattle: 0,
     maxTurns: clampNumber(body.maxTurns, 1, 200, 40),
     moveDelayMs: clampNumber(body.moveDelayMs, 0, 5000, 200),
@@ -445,8 +535,8 @@ async function runServerLadder(run) {
       serverOrigin: `http://localhost:${port}`,
       runId: run.id,
       outDir: run.outDir,
-      ratingStorePath: run.ratingStorePath,
       battleCount: run.battleCount,
+      bestOf: run.bestOf,
       maxTurns: run.maxTurns,
       moveDelayMs: run.moveDelayMs,
       timeoutMs: run.timeoutMs,
@@ -501,6 +591,7 @@ function summarizeLadderRun(run) {
     startedAt: run.startedAt,
     finishedAt: run.finishedAt,
     battleCount: run.battleCount,
+    bestOf: run.bestOf,
     currentBattle: run.currentBattle,
     maxTurns: run.maxTurns,
     moveDelayMs: run.moveDelayMs,
@@ -514,14 +605,20 @@ function summarizeLadderRun(run) {
     outDir: run.outDir,
     summaryPath: run.summaryPath,
     summaryHref: run.summaryHref || artifactHrefFor(run.summaryPath),
-    ratingStorePath: run.ratingStorePath,
-    ratingStoreHref: run.ratingStoreHref || artifactHrefFor(run.ratingStorePath),
     lastBattle: run.lastBattle,
     totals: run.summary?.totals || null,
-    ratings: run.summary?.ratings || null,
+    seriesWinner: run.summary?.seriesWinner || null,
+    seriesValid: run.summary?.seriesValid ?? null,
     usage: run.summary?.usage || null,
     error: run.error,
   };
+}
+
+function normalizeBestOf(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number) || number < 1) return 0;
+  const integer = Math.min(99, Math.floor(number));
+  return integer % 2 === 1 ? integer : Math.max(1, integer - 1);
 }
 
 function isLadderActive(run) {
@@ -582,8 +679,6 @@ function startServerTournament(body = {}) {
     outDir,
     summaryPath: path.join(outDir, 'summary-latest.json'),
     summaryHref: '',
-    ratingStorePath: path.join(artifactsDir, 'ratings-store.json'),
-    ratingStoreHref: '/artifacts/ratings-store.json',
     agentSpecs,
     agentCount: agentSpecs.length,
     pairCount,
@@ -615,7 +710,6 @@ async function runServerTournament(run) {
       serverOrigin: `http://localhost:${port}`,
       runId: run.id,
       outDir: run.outDir,
-      ratingStorePath: run.ratingStorePath,
       agents: run.agentSpecs,
       battlesPerPair: run.battlesPerPair,
       maxTurns: run.maxTurns,
@@ -689,12 +783,9 @@ function summarizeTournamentRun(run) {
     outDir: run.outDir,
     summaryPath: run.summaryPath,
     summaryHref: run.summaryHref || artifactHrefFor(run.summaryPath),
-    ratingStorePath: run.ratingStorePath,
-    ratingStoreHref: run.ratingStoreHref || artifactHrefFor(run.ratingStorePath),
     lastPair: run.lastPair,
     totals: run.summary?.totals || null,
     standings: run.summary?.standings || null,
-    ratings: run.summary?.ratings || null,
     usage: run.summary?.usage || null,
     error: run.error,
   };
@@ -748,21 +839,26 @@ async function handleBenchmarkRequest(req, res) {
 
 async function planServerBenchmark(body = {}) {
   if (isBenchmarkActive(benchmarkRun)) throw new Error(`Benchmark already active: ${benchmarkRun.id}`);
-  const id = `benchmark-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-  const outDir = path.join(artifactsDir, 'benchmark-suites', id);
-  const plan = await buildServerBenchmarkPlan(body);
-  const planPath = path.join(outDir, 'suite-plan.json');
-  await writeBenchmarkPlan(plan, planPath);
-  const run = createBenchmarkRun({
-    body,
-    id,
-    outDir,
-    plan,
-    planPath,
-    status: 'planned',
-  });
-  benchmarkRun = run;
-  return run;
+  const transition = claimBenchmarkTransition('planning');
+  try {
+    const id = `benchmark-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    const outDir = path.join(artifactsDir, 'benchmark-suites', id);
+    const plan = await buildServerBenchmarkPlan(body);
+    const planPath = path.join(outDir, 'suite-plan.json');
+    await writeBenchmarkPlan(plan, planPath);
+    const run = createBenchmarkRun({
+      body,
+      id,
+      outDir,
+      plan,
+      planPath,
+      status: 'planned',
+    });
+    benchmarkRun = run;
+    return run;
+  } finally {
+    releaseBenchmarkTransition(transition);
+  }
 }
 
 async function startServerBenchmark(body = {}) {
@@ -773,27 +869,44 @@ async function startServerBenchmark(body = {}) {
   if (isTournamentActive(tournamentRun)) throw new Error(`Tournament already active: ${tournamentRun.id}`);
   if (isLadderActive(ladderRun)) throw new Error(`Ladder already active: ${ladderRun.id}`);
   if (isRunActive(liveRuns.get(''))) throw new Error(`Run already active: ${liveRuns.get('').id}`);
+  const transition = claimBenchmarkTransition('starting');
+  try {
+    const usePlanned = benchmarkRun?.status === 'planned' && body.usePlanned !== false && benchmarkRun.plan;
+    const id = usePlanned ? benchmarkRun.id : `benchmark-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    const outDir = usePlanned ? benchmarkRun.outDir : path.join(artifactsDir, 'benchmark-suites', id);
+    const plan = usePlanned ? benchmarkRun.plan : await buildServerBenchmarkPlan(body);
+    const planPath = usePlanned ? benchmarkRun.planPath : path.join(outDir, 'suite-plan.json');
+    if (!usePlanned) await writeBenchmarkPlan(plan, planPath);
 
-  const usePlanned = benchmarkRun?.status === 'planned' && body.usePlanned !== false && benchmarkRun.plan;
-  const id = usePlanned ? benchmarkRun.id : `benchmark-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-  const outDir = usePlanned ? benchmarkRun.outDir : path.join(artifactsDir, 'benchmark-suites', id);
-  const plan = usePlanned ? benchmarkRun.plan : await buildServerBenchmarkPlan(body);
-  const planPath = usePlanned ? benchmarkRun.planPath : path.join(outDir, 'suite-plan.json');
-  if (!usePlanned) await writeBenchmarkPlan(plan, planPath);
+    const run = createBenchmarkRun({
+      body,
+      id,
+      outDir,
+      plan,
+      planPath,
+      status: body.startPaused ? 'paused' : 'running',
+    });
+    run.startedAt = new Date().toISOString();
+    run.runPaidBenchmark = true;
+    benchmarkRun = run;
+    void runServerBenchmark(run);
+    return run;
+  } finally {
+    releaseBenchmarkTransition(transition);
+  }
+}
 
-  const run = createBenchmarkRun({
-    body,
-    id,
-    outDir,
-    plan,
-    planPath,
-    status: body.startPaused ? 'paused' : 'running',
-  });
-  run.startedAt = new Date().toISOString();
-  run.runPaidBenchmark = true;
-  benchmarkRun = run;
-  void runServerBenchmark(run);
-  return run;
+function claimBenchmarkTransition(kind) {
+  if (benchmarkTransition) {
+    throw new Error(`Benchmark ${benchmarkTransition.kind} already in progress`);
+  }
+  const token = Symbol(kind);
+  benchmarkTransition = {token, kind, startedAt: new Date().toISOString()};
+  return token;
+}
+
+function releaseBenchmarkTransition(token) {
+  if (benchmarkTransition?.token === token) benchmarkTransition = null;
 }
 
 function createBenchmarkRun({body = {}, id, outDir, plan, planPath, status}) {
@@ -810,8 +923,6 @@ function createBenchmarkRun({body = {}, id, outDir, plan, planPath, status}) {
     planHref: artifactHrefFor(planPath),
     summaryPath: path.join(outDir, 'summary-latest.json'),
     summaryHref: '',
-    ratingStorePath: path.join(artifactsDir, 'ratings-store.json'),
-    ratingStoreHref: '/artifacts/ratings-store.json',
     openRouterLimit: clampNumber(body.openRouterLimit, 1, 32, 10),
     openaiBaselines: benchmarkList(body.openaiBaselines, ['openai:gpt-5.5:low', 'openai:gpt-5.5:medium']),
     battlesPerPair,
@@ -854,7 +965,6 @@ async function runServerBenchmark(run) {
       runId: run.id,
       outDir: run.outDir,
       plan: run.plan,
-      ratingStorePath: run.ratingStorePath,
       battlesPerPair: run.battlesPerPair,
       maxTurns: run.maxTurns,
       moveDelayMs: run.moveDelayMs,
@@ -933,11 +1043,8 @@ function summarizeBenchmarkRun(run) {
     planHref: run.planHref || artifactHrefFor(run.planPath),
     summaryPath: run.summaryPath,
     summaryHref: run.summaryHref || artifactHrefFor(run.summaryPath),
-    ratingStorePath: run.ratingStorePath,
-    ratingStoreHref: run.ratingStoreHref || artifactHrefFor(run.ratingStorePath),
     lastPair: run.lastPair,
     totals: run.summary?.totals || null,
-    ratings: run.summary?.ratings || null,
     usage: run.summary?.usage || null,
     error: run.error,
   };
@@ -975,12 +1082,52 @@ function isBenchmarkActive(run) {
 
 async function runLiveMatch(run) {
   try {
-    const result = await runWebSocketMatch({
+    for (let game = 1; game <= run.gameCount; game += 1) {
+      if (run.abortController.signal.aborted) break;
+      await waitIfLiveRunPaused(run);
+      if (run.abortController.signal.aborted) break;
+      run.currentGame = game;
+      resetLiveGameTelemetry(run);
+      const outputPath = run.gameCount === 1
+        ? run.outputPath
+        : path.join(artifactsDir, 'live-runs', `${run.id}-g${String(game).padStart(2, '0')}.json`);
+      const result = await runLiveGame(run, outputPath, game);
+      copyMatchTelemetry(run, result);
+      run.usageTotals = mergeUsageSummaries(run.usageTotals, result.usage || summarizeUsage(result.modelCalls || []));
+      run.result = result.result || null;
+      run.outputPath = outputPath;
+      run.eventsPath = result.eventsPath || '';
+      run.eventsHref = result.eventsHref || '';
+      await recordLiveGame(run, result, outputPath, game);
+      if (result.result?.reason === 'ABORTED' || run.abortController.signal.aborted) break;
+      // Let the winner banner breathe before the next game resets the stage.
+      if (game < run.gameCount) await interGamePause(run);
+    }
+    run.status = run.abortController.signal.aborted || run.result?.reason === 'ABORTED' ? 'stopped' : 'finished';
+  } catch (error) {
+    run.status = run.abortController.signal.aborted ? 'stopped' : 'error';
+    run.error = sanitizeText(error?.message || error);
+  } finally {
+    // The browser remains the sole long-lived owner of visitor credentials.
+    // The per-run server copy exists only while provider calls can use it.
+    run.providerKeys = {};
+    for (const role of ['p1', 'p2']) {
+      run.roleStates[role] = {...run.roleStates[role], phase: 'finished'};
+    }
+    run.paused = false;
+    resumeLiveRun(run);
+    run.finishedAt = new Date().toISOString();
+  }
+}
+
+function runLiveGame(run, outputPath, game) {
+  return runWebSocketMatch({
       serverOrigin: `http://localhost:${port}`,
       battleId: run.battleId,
-      outputPath: run.outputPath,
+      outputPath,
       formatid: run.formatid,
-      seed: run.seed,
+      // An explicit seed pins game 1 only; later games get fresh teams.
+      seed: game === 1 ? run.seed : null,
       maxTurns: run.maxTurns,
       moveDelayMs: run.moveDelayMs,
       timeoutMs: run.timeoutMs,
@@ -992,6 +1139,14 @@ async function runLiveMatch(run) {
         run.lastObservation = summarizeLiveObservation(observationRecord);
         const role = observationRecord?.role;
         if (role === 'p1' || role === 'p2') {
+          run.roleStates[role] = {
+            phase: 'thinking',
+            turn: observationRecord.turn ?? null,
+            requestId: observationRecord.requestId ?? null,
+            observationAt: observationRecord.at || new Date().toISOString(),
+            decisionAt: '',
+            submittedAt: '',
+          };
           run.lastBoards[role] = summarizeLiveBoard(observationRecord.observation);
         }
       },
@@ -1000,11 +1155,25 @@ async function runLiveMatch(run) {
         run.lastModelCall = summarizeLiveModelCall(call, callIndex);
         run.lastModelCalls.push(run.lastModelCall);
         run.lastModelCalls = run.lastModelCalls.slice(-14);
+        if (call.role === 'p1' || call.role === 'p2') {
+          run.roleStates[call.role] = {
+            ...run.roleStates[call.role],
+            phase: call.error ? 'error' : 'decision-ready',
+            decisionAt: call.at || new Date().toISOString(),
+          };
+        }
       },
       onAction: ({run: match, actionRecord, call}) => {
         copyMatchTelemetry(run, match);
         run.lastActions.push(summarizeLiveAction(actionRecord, call));
         run.lastActions = run.lastActions.slice(-8);
+        if (actionRecord.role === 'p1' || actionRecord.role === 'p2') {
+          run.roleStates[actionRecord.role] = {
+            ...run.roleStates[actionRecord.role],
+            phase: 'submitted',
+            submittedAt: actionRecord.at || new Date().toISOString(),
+          };
+        }
       },
       agents: {
         p1: run.agentP1,
@@ -1012,19 +1181,146 @@ async function runLiveMatch(run) {
       },
       providerKeys: run.providerKeys,
       sessionId: run.sessionId,
-    });
-    copyMatchTelemetry(run, result);
-    run.status = result.result?.reason === 'ABORTED' ? 'stopped' : 'finished';
-    run.result = result.result || null;
-    run.eventsPath = result.eventsPath || '';
-    run.eventsHref = result.eventsHref || '';
+  });
+}
+
+// Between games the telemetry restarts: the viewer's turn counter, boards,
+// and minds belong to the game on stage, not the whole run.
+function resetLiveGameTelemetry(run) {
+  run.result = null;
+  run.currentTurn = 0;
+  run.observationCount = 0;
+  run.modelCallCount = 0;
+  run.actionCount = 0;
+  run.usage = null;
+  run.validBenchmark = true;
+  run.apiErrorCount = 0;
+  run.fallbackCount = 0;
+  run.invalidChoiceCount = 0;
+  run.lastObservation = null;
+  run.lastBoards = {p1: null, p2: null};
+  run.lastModelCall = null;
+  run.lastModelCalls = [];
+  run.lastActions = [];
+  run.roleStates = {
+    p1: createLiveRoleState(),
+    p2: createLiveRoleState(),
+  };
+}
+
+// Write the game's text transcript and roll the result into the persistent
+// series for this pairing. Both are best-effort: a failed write must never
+// kill the run.
+async function recordLiveGame(run, result, outputPath, game) {
+  let transcriptHref = '';
+  try {
+    const transcriptPath = transcriptPathForArtifact(outputPath);
+    await fs.promises.writeFile(transcriptPath, transcriptFromMatchArtifact(result));
+    transcriptHref = artifactHrefFor(transcriptPath);
+    run.transcriptPath = transcriptPath;
+    run.transcriptHref = transcriptHref;
+  } catch {
+    // transcript is a convenience artifact
+  }
+  const aborted = result.result?.reason === 'ABORTED';
+  const gameRecord = {
+    gameId: `${run.id}#${game}`,
+    game,
+    at: new Date().toISOString(),
+    runId: run.id,
+    winnerRole: result.result?.winnerRole || null,
+    winnerName: sanitizeText(String(result.result?.winner || '')),
+    turns: result.result?.turn ?? null,
+    reason: result.result?.reason || '',
+    valid: Boolean(result.validBenchmark),
+    aborted,
+    outputHref: artifactHrefFor(outputPath),
+    transcriptHref,
+  };
+  run.games.push(gameRecord);
+  if (aborted) return;
+  try {
+    const series = await withSeriesStore(store => recordSeriesGame(store, seriesIdentity(run), gameRecord));
+    run.series = summarizeSeries(series);
+  } catch {
+    // the series record is a convenience; the run result stands on its own
+  }
+}
+
+function seriesIdentity(run) {
+  return {sessionId: run.sessionId || '', agentP1: run.agentP1, agentP2: run.agentP2};
+}
+
+// Serialize every read-modify-write of the series store through one queue so
+// concurrent visitor runs never clobber each other's records.
+function withSeriesStore(fn) {
+  const task = seriesStoreQueue.then(async () => {
+    const store = await loadSeriesStore(seriesStorePath);
+    const result = await fn(store);
+    await saveSeriesStore(seriesStorePath, store);
+    return result;
+  });
+  seriesStoreQueue = task.then(() => {}, () => {});
+  return task;
+}
+
+function summarizeSeries(series) {
+  if (!series) return null;
+  return {
+    key: series.key,
+    sessionId: series.sessionId,
+    agentP1: series.agentP1,
+    agentP2: series.agentP2,
+    createdAt: series.createdAt,
+    updatedAt: series.updatedAt,
+    totals: series.totals,
+    games: (series.games || []).slice(-100),
+  };
+}
+
+async function handleSeriesGetRequest(res, url) {
+  try {
+    const identity = {
+      sessionId: normalizeSessionId(url.searchParams.get('session')),
+      agentP1: sanitizeAgentSpec(url.searchParams.get('agentP1')),
+      agentP2: sanitizeAgentSpec(url.searchParams.get('agentP2')),
+    };
+    const store = await loadSeriesStore(seriesStorePath);
+    sendJson(res, {ok: true, series: summarizeSeries(getSeries(store, identity))});
   } catch (error) {
-    run.status = run.abortController.signal.aborted ? 'stopped' : 'error';
-    run.error = sanitizeText(error?.message || error);
-  } finally {
-    run.paused = false;
-    resumeLiveRun(run);
-    run.finishedAt = new Date().toISOString();
+    sendJson(res, {ok: false, error: sanitizeText(error?.message || error)}, 400);
+  }
+}
+
+async function handleSeriesPostRequest(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const command = String(body.command || body.action || '').trim().toLowerCase();
+    if (command !== 'reset') throw new Error(`Unknown series command: ${command}`);
+    const identity = {
+      sessionId: normalizeSessionId(body.sessionId),
+      agentP1: sanitizeAgentSpec(body.agentP1),
+      agentP2: sanitizeAgentSpec(body.agentP2),
+    };
+    await withSeriesStore(store => resetSeries(store, identity));
+    const activeRun = liveRuns.get(identity.sessionId);
+    if (activeRun && activeRun.agentP1 === identity.agentP1 && activeRun.agentP2 === identity.agentP2) {
+      activeRun.series = null;
+    }
+    sendJson(res, {ok: true, series: null});
+  } catch (error) {
+    sendJson(res, {ok: false, error: sanitizeText(error?.message || error)}, 400);
+  }
+}
+
+// A short abort-aware breather so a finished game's banner is visible before
+// the next game of the run resets the stage.
+async function interGamePause(run, ms = 5000) {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (run.abortController.signal.aborted) return;
+    await waitIfLiveRunPaused(run);
+    await new Promise(resolve => setTimeout(resolve, 200));
   }
 }
 
@@ -1135,6 +1431,11 @@ function summarizeLiveModelCall(call = {}, callIndex = null) {
     usage: call.usage || null,
     prompt: sanitizeText(call.prompt || '').slice(0, 8000),
     rawText: sanitizeText(call.rawText || '').slice(0, 4000),
+    scores: Array.isArray(call.scores) ? call.scores.slice(0, 8).map(item => ({
+      choice: sanitizeText(item?.choice || '').slice(0, 160),
+      label: sanitizeText(item?.label || '').slice(0, 160),
+      score: Number.isFinite(Number(item?.score)) ? Number(item.score) : null,
+    })) : [],
   };
 }
 
@@ -1145,6 +1446,9 @@ function summarizeLiveAction(action = {}, call = {}) {
     turn: action.turn ?? null,
     requestId: action.requestId ?? null,
     choice: action.choice || '',
+    // The human name of what was pressed ("Active 1: Fake Out → foe 1 / …")
+    // so viewer surfaces never have to show protocol strings.
+    label: sanitizeText(action.action?.label || '').slice(0, 160),
     observationIndex: action.observationIndex ?? null,
     callIndex: action.callIndex ?? null,
     provider: call.provider || '',
@@ -1158,18 +1462,8 @@ function summarizeLiveAction(action = {}, call = {}) {
 function summarizeDecisionAnalysis(analysis = null) {
   if (!analysis || typeof analysis !== 'object') return null;
   const output = {};
-  for (const key of [
-    'gameStateSummary',
-    'winConditions',
-    'loseConditions',
-    'setupLines',
-    'sweepPlans',
-    'safeSwitches',
-    'opponentLikelyPlan',
-    'biggestThreats',
-    'riskAssessment',
-    'candidateChoices',
-  ]) {
+  // The response schema owns the analysis field list; never re-declare it.
+  for (const key of REQUIRED_ANALYSIS_FIELDS) {
     if (!Array.isArray(analysis[key])) continue;
     output[key] = analysis[key]
       .map(value => sanitizeText(String(value || '')).slice(0, 420))
@@ -1181,16 +1475,43 @@ function summarizeDecisionAnalysis(analysis = null) {
 
 function summarizeLiveRun(run) {
   if (!run) return null;
+  const summary = summarizeLiveRunFields(run);
+  // While a human is playing, the opponent's hand stays hidden: no AI mind
+  // (analysis/prompt/reasons), no AI private board. Everything is revealed
+  // once the run finishes — the post-game "what was it thinking" is the fun.
+  if (run.humanRoles?.length && isRunActive(run) && !run.revealOpponentMind) {
+    const hiddenRoles = ['p1', 'p2'].filter(role => !run.humanRoles.includes(role));
+    summary.lastModelCalls = (summary.lastModelCalls || []).filter(call => !hiddenRoles.includes(call.role));
+    summary.lastModelCall = hiddenRoles.includes(summary.lastModelCall?.role) ? null : summary.lastModelCall;
+    summary.lastObservation = hiddenRoles.includes(summary.lastObservation?.role) ? null : summary.lastObservation;
+    summary.lastBoards = Object.fromEntries(['p1', 'p2'].map(role =>
+      [role, hiddenRoles.includes(role) ? null : summary.lastBoards?.[role] || null]));
+    summary.lastActions = (summary.lastActions || []).map(action =>
+      hiddenRoles.includes(action.role) ? {...action, reason: ''} : action);
+  }
+  return summary;
+}
+
+function summarizeLiveRunFields(run) {
   return {
     id: run.id,
     status: run.status,
     startedAt: run.startedAt,
     finishedAt: run.finishedAt,
     battleId: run.battleId,
+    humanRoles: run.humanRoles || [],
+    revealOpponentMind: Boolean(run.revealOpponentMind),
     outputPath: run.outputPath,
     outputHref: artifactHrefFor(run.outputPath),
     eventsPath: run.eventsPath,
     eventsHref: run.eventsHref || artifactHrefFor(run.eventsPath),
+    transcriptPath: run.transcriptPath || '',
+    transcriptHref: run.transcriptHref || '',
+    gameCount: run.gameCount || 1,
+    currentGame: run.currentGame || 0,
+    games: run.games || [],
+    series: run.series || null,
+    usageTotals: run.usageTotals || null,
     formatid: run.formatid,
     seed: run.seed,
     maxTurns: run.maxTurns,
@@ -1202,6 +1523,8 @@ function summarizeLiveRun(run) {
     paused: run.paused,
     result: run.result,
     error: run.error,
+    phase: liveRunPhase(run),
+    roleStates: run.roleStates || null,
     currentTurn: run.currentTurn || 0,
     observationCount: run.observationCount || 0,
     modelCallCount: run.modelCallCount || 0,
@@ -1217,6 +1540,19 @@ function summarizeLiveRun(run) {
     lastModelCalls: run.lastModelCalls || [],
     lastActions: run.lastActions || [],
   };
+}
+
+function liveRunPhase(run) {
+  if (!run) return 'idle';
+  if (run.paused || run.status === 'paused') return 'paused';
+  if (run.status === 'finished' || run.status === 'stopped') return 'finished';
+  if (run.status === 'error') return 'error';
+  const phases = Object.values(run.roleStates || {}).map(state => state?.phase);
+  if (phases.includes('error')) return 'error';
+  if (phases.includes('thinking')) return 'thinking';
+  if (phases.includes('decision-ready')) return 'decision-ready';
+  if (phases.includes('submitted')) return 'resolving';
+  return 'preparing';
 }
 
 function latestMatchTurn(match = {}) {
@@ -1296,6 +1632,7 @@ async function pruneLiveArtifacts() {
     for (const {name} of stats.slice(MAX_LIVE_ARTIFACTS)) {
       await fs.promises.rm(path.join(dir, name), {force: true});
       await fs.promises.rm(path.join(dir, name.replace(/\.json$/, '.events.jsonl')), {force: true});
+      await fs.promises.rm(path.join(dir, name.replace(/\.json$/, '.transcript.txt')), {force: true});
     }
   } catch {
     // retention is best-effort
@@ -1311,12 +1648,14 @@ function normalizeProviderKeys(body = {}) {
   return keys;
 }
 
-// Validates a visitor's OpenRouter key against the free auth endpoint and
-// returns only non-secret account facts. The key is not logged or stored.
+// Validates a visitor key without making an inference call. The key is never
+// logged or stored; only non-secret account/provider facts are returned.
 async function handleKeyValidateRequest(req, res) {
   try {
     const body = await readJsonBody(req);
-    const key = typeof body.openrouterKey === 'string' ? body.openrouterKey.trim() : '';
+    const provider = 'openrouter';
+    const rawKey = body.key || body.openrouterKey;
+    const key = typeof rawKey === 'string' ? rawKey.trim() : '';
     if (!key || key.length > 250) {
       sendJson(res, {ok: false, error: 'No key provided'}, 400);
       return;
@@ -1334,11 +1673,12 @@ async function handleKeyValidateRequest(req, res) {
     const balance = Number(credits.total_credits || 0) - Number(credits.total_usage || 0);
     sendJson(res, {
       ok: true,
+      provider,
       balance: Number.isFinite(balance) ? Math.round(balance * 100) / 100 : null,
       limitRemaining: Number.isFinite(Number(auth.limit_remaining)) ? Math.round(Number(auth.limit_remaining) * 100) / 100 : null,
     });
   } catch (error) {
-    sendJson(res, {ok: false, error: 'Could not reach OpenRouter to validate the key'}, 200);
+    sendJson(res, {ok: false, error: 'Could not reach the provider to validate the key'}, 200);
   }
 }
 
@@ -1442,7 +1782,17 @@ function getBattle(battleId = DEFAULT_BATTLE_ID) {
 
 function createBattle(battleId = DEFAULT_BATTLE_ID, options = {}) {
   const id = normalizeBattleId(battleId);
+  // Every session is a full simulator battle; a stranger cycling random
+  // battleIds (via any battle-scoped endpoint or /api/reset) must not be
+  // able to grow the map without bound.
+  if (!battleSessions.has(id)) {
+    if (battleSessions.size >= MAX_BATTLE_SESSIONS) pruneBattleSessions();
+    if (battleSessions.size >= MAX_BATTLE_SESSIONS) {
+      throw new Error('Too many concurrent battles — try again shortly');
+    }
+  }
   const battle = new BattleSession(options);
+  battle.createdAt = Date.now();
   battle.onEvent(event => broadcastBattleEvent(id, battle, event));
   battleSessions.set(id, battle);
   return battle;
@@ -1479,11 +1829,29 @@ function summarizeBattle(battleId, battle) {
 }
 
 function pruneBattleSessions() {
+  const now = Date.now();
   for (const [battleId, battle] of battleSessions) {
     if (battleId === DEFAULT_BATTLE_ID) continue;
     const clientCount = [...clients.values()].filter(client => client.battleId === battleId).length;
-    if (clientCount === 0 && battle.public?.ended) {
+    if (clientCount > 0) continue;
+    // Ended battles go as soon as nobody is watching; abandoned unfinished
+    // ones (a visitor created it and left) go after an idle hour.
+    const abandoned = now - (battle.createdAt || 0) > BATTLE_SESSION_IDLE_MS;
+    if (battle.public?.ended || abandoned) {
       battleSessions.delete(battleId);
+    }
+  }
+}
+
+function pruneLiveRuns() {
+  const now = Date.now();
+  const completed = [...liveRuns.entries()]
+    .filter(([sessionId, run]) => sessionId && run && !isRunActive(run))
+    .sort(([, a], [, b]) => String(b.finishedAt || b.startedAt).localeCompare(String(a.finishedAt || a.startedAt)));
+  for (const [index, [sessionId, run]] of completed.entries()) {
+    const finishedAt = Date.parse(run.finishedAt || run.startedAt || '') || 0;
+    if (index >= MAX_COMPLETED_LIVE_RUNS || (finishedAt && now - finishedAt > LIVE_RUN_RETENTION_MS)) {
+      liveRuns.delete(sessionId);
     }
   }
 }
@@ -1496,19 +1864,6 @@ function sendJson(res, payload, status = 200) {
   res.writeHead(status, {'content-type': 'application/json; charset=utf-8'});
   res.end(JSON.stringify(payload, null, 2));
 }
-
-async function listArtifacts(res) {
-  try {
-    const files = await listJsonArtifacts(artifactsDir);
-    files.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    sendJson(res, {artifacts: files});
-  } catch (error) {
-    res.writeHead(500, {'content-type': 'application/json; charset=utf-8'});
-    res.end(JSON.stringify({error: String(error?.message || error)}));
-  }
-}
-
-const replayIndexCache = new Map();
 
 // OpenRouter model catalog for the arena's model picker: no auth required,
 // cached for an hour, filtered to models that advertise strict structured
@@ -1533,6 +1888,8 @@ async function listPickableModels(res) {
             promptPricePerM: Math.round(Number(model.pricing?.prompt || 0) * 1e6 * 1000) / 1000,
             completionPricePerM: Math.round(Number(model.pricing?.completion || 0) * 1e6 * 1000) / 1000,
             contextLength: Number(model.context_length || 0) || null,
+            // Whether the model advertises a tunable reasoning-effort dial.
+            reasoning: (model.supported_parameters || []).includes('reasoning'),
           }))
           .filter(model => model.id)
           .sort((a, b) => a.id.localeCompare(b.id));
@@ -1547,106 +1904,6 @@ async function listPickableModels(res) {
     count: modelCatalogCache.models.length,
     models: modelCatalogCache.models,
   });
-}
-
-async function listReplays(res, sessionId = '') {
-  try {
-    const files = await listJsonArtifacts(artifactsDir);
-    const replays = [];
-    for (const file of files) {
-      // Test fixtures are not user-facing replays.
-      if (file.name.startsWith('verification/') || /-smoke(\.events)?\.json$/.test(file.name)) continue;
-      const filePath = path.join(artifactsDir, ...file.name.split('/'));
-      const summary = await summarizeReplayArtifact(filePath, file);
-      if (!summary) continue;
-      // A visitor sees their own matches plus the unscoped local/CLI gallery.
-      if (sessionId && summary.sessionId && summary.sessionId !== sessionId) continue;
-      replays.push(summary);
-    }
-    replays.sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
-    sendJson(res, {replays: replays.slice(0, 200)});
-  } catch (error) {
-    sendJson(res, {ok: false, error: sanitizeText(error?.message || error)}, 500);
-  }
-}
-
-async function summarizeReplayArtifact(filePath, file) {
-  const cached = replayIndexCache.get(filePath);
-  if (cached && cached.updatedAt === file.updatedAt) return cached.summary;
-  let summary = null;
-  try {
-    const head = await readFileHead(filePath, 2048);
-    if (head.includes('showdown-match-artifact.v1')) {
-      const artifact = JSON.parse(await fs.promises.readFile(filePath, 'utf8'));
-      if (artifact.schemaVersion === 'showdown-match-artifact.v1' && Array.isArray(artifact.protocol) && artifact.protocol.length) {
-        summary = {
-          id: file.name,
-          href: file.href,
-          bytes: file.bytes,
-          sessionId: sanitizeText(String(artifact.sessionId || '')).slice(0, 24),
-          startedAt: artifact.startedAt || file.updatedAt,
-          finishedAt: artifact.finishedAt || '',
-          battleId: artifact.battleId || '',
-          formatid: artifact.formatid || '',
-          agents: {
-            p1: replayAgentSummary(artifact.agents?.p1),
-            p2: replayAgentSummary(artifact.agents?.p2),
-          },
-          result: artifact.result || null,
-          decisions: Array.isArray(artifact.actions) ? artifact.actions.length : 0,
-          validBenchmark: Boolean(artifact.validBenchmark),
-          usage: artifact.usage
-            ? {costUsd: Number(artifact.usage.costUsd) || 0, totalTokens: Number(artifact.usage.totalTokens) || 0}
-            : null,
-        };
-      }
-    }
-  } catch {
-    summary = null;
-  }
-  replayIndexCache.set(filePath, {updatedAt: file.updatedAt, summary});
-  return summary;
-}
-
-function replayAgentSummary(agent = {}) {
-  return {
-    name: sanitizeText(String(agent?.name || 'unknown')),
-    provider: sanitizeText(String(agent?.provider || '')),
-    model: sanitizeText(String(agent?.model || '')),
-    reasoningEffort: sanitizeText(String(agent?.reasoningEffort || '')),
-  };
-}
-
-async function readFileHead(filePath, bytes) {
-  const handle = await fs.promises.open(filePath, 'r');
-  try {
-    const buffer = Buffer.alloc(bytes);
-    const {bytesRead} = await handle.read(buffer, 0, bytes, 0);
-    return buffer.subarray(0, bytesRead).toString('utf8');
-  } finally {
-    await handle.close();
-  }
-}
-
-async function listJsonArtifacts(dir, prefix = '') {
-  const entries = await fs.promises.readdir(dir, {withFileTypes: true});
-  const files = [];
-  for (const entry of entries) {
-    const filePath = path.join(dir, entry.name);
-    const relativeName = prefix ? `${prefix}/${entry.name}` : entry.name;
-    if (entry.isDirectory() && !relativeName.includes('asset-cache')) {
-      files.push(...await listJsonArtifacts(filePath, relativeName));
-    } else if (entry.isFile() && entry.name.endsWith('.json')) {
-      const stat = await fs.promises.stat(filePath);
-      files.push({
-        name: relativeName,
-        href: `/artifacts/${relativeName}`,
-        bytes: stat.size,
-        updatedAt: stat.mtime.toISOString(),
-      });
-    }
-  }
-  return files;
 }
 
 function serveStatic(urlPath, res) {
@@ -1711,10 +1968,10 @@ async function serveCachedRemoteAsset(cleanPath, res) {
   }
 }
 
-function serveStaticFrom(baseDir, urlPath, res) {
+function serveStaticFrom(baseDir, urlPath, res, cacheControl = 'no-cache') {
   const cleanPath = urlPath === '/' ? '/index.html' : urlPath;
   const filePath = path.resolve(baseDir, `.${decodeURIComponent(cleanPath)}`);
-  if (!filePath.startsWith(baseDir)) {
+  if (filePath !== baseDir && !filePath.startsWith(baseDir + path.sep)) {
     res.writeHead(403);
     res.end('Forbidden');
     return;
@@ -1725,7 +1982,9 @@ function serveStaticFrom(baseDir, urlPath, res) {
       res.end('Not found');
       return;
     }
-    res.writeHead(200, {'content-type': contentType(filePath)});
+    // App assets default to no-cache: without it browsers heuristically
+    // cache and serve stale arena code after every deploy.
+    res.writeHead(200, {'content-type': contentType(filePath), 'cache-control': cacheControl});
     res.end(data);
   });
 }
@@ -1742,6 +2001,7 @@ function contentType(filePath) {
   if (filePath.endsWith('.css')) return 'text/css; charset=utf-8';
   if (filePath.endsWith('.json')) return 'application/json; charset=utf-8';
   if (filePath.endsWith('.jsonl')) return 'application/x-ndjson; charset=utf-8';
+  if (filePath.endsWith('.txt')) return 'text/plain; charset=utf-8';
   if (filePath.endsWith('.png')) return 'image/png';
   if (filePath.endsWith('.jpg') || filePath.endsWith('.jpeg')) return 'image/jpeg';
   if (filePath.endsWith('.gif')) return 'image/gif';

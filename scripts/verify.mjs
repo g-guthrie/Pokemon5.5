@@ -35,10 +35,12 @@ const smokeCommands = [
   ['runner', ['npm', 'run', 'smoke:runner']],
   ['isolation', ['npm', 'run', 'smoke:isolation']],
   ['usage', ['npm', 'run', 'smoke:usage']],
+  ['stale-state', ['npm', 'run', 'smoke:stale-state']],
   ['events', ['npm', 'run', 'smoke:events']],
   ['reproducibility', ['npm', 'run', 'smoke:repro']],
   ['prompt', ['npm', 'run', 'smoke:prompt']],
   ['live-run-api', ['npm', 'run', 'smoke:live']],
+  ['human-play', ['npm', 'run', 'smoke:human']],
   ['frontend-ui', ['npm', 'run', 'smoke:frontend']],
   ['provider-config', ['npm', 'run', 'smoke:provider-config']],
   ['provider-artifact', ['npm', 'run', 'smoke:provider-artifact']],
@@ -98,7 +100,6 @@ async function runStandaloneLadderCheck() {
     try {
       await waitForServer(server, serverOrigin);
       const outDir = path.join(reportDir, 'ladder-batch');
-      const ratingStorePath = path.join(outDir, 'ratings-store.json');
       await fs.rm(outDir, {recursive: true, force: true});
       const summary = await runLadderBatch({
         serverOrigin,
@@ -109,19 +110,15 @@ async function runStandaloneLadderCheck() {
         moveDelayMs: 5,
         timeoutMs: 20000,
         outDir,
-        ratingStorePath,
         seedBase: 990000,
         watchLocal: false,
       });
       assert(summary.schemaVersion === 'showdown-ladder-summary.v1', 'wrong ladder summary schema');
       assert(summary.battles.length === 1, 'ladder did not record one battle');
       assert(summary.battles[0].eventsPath, 'ladder battle missing event log');
-      assert(Object.keys(summary.ratings || {}).length >= 2, 'ladder did not update both ratings');
       return {
         summaryPath: summary.summaryPath,
-        ratingStorePath: summary.ratingStorePath,
         completedBattles: summary.battles.length,
-        ratings: Object.keys(summary.ratings || {}),
       };
     } finally {
       if (server.exitCode === null) server.kill();
@@ -324,7 +321,7 @@ function sensitivePatterns() {
 }
 
 function timeoutFor(name) {
-  if (['runner', 'reproducibility', 'live-run-api', 'frontend-ui', 'ladder-ui', 'tournament', 'tournament-api', 'benchmark-api'].includes(name)) return 90000;
+  if (['runner', 'reproducibility', 'live-run-api', 'human-play', 'frontend-ui', 'ladder-ui', 'tournament', 'tournament-api', 'benchmark-api'].includes(name)) return 90000;
   return 30000;
 }
 

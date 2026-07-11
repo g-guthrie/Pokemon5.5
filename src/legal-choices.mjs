@@ -44,12 +44,27 @@ function getForceSwitchActions(request) {
   if (!Array.isArray(request.forceSwitch) || request.forceSwitch.length <= 1) {
     return getSwitchActions(request, true, 0);
   }
+  // With fewer healthy bench mons than slots to fill (double faint, one mon
+  // left), the same mon must not be offered to both slots — earlier slots
+  // claim the bench, later slots pass ("switch 6, pass"), matching what the
+  // native client submits. Without this the combiner dedupes every combo
+  // away and the request has zero legal actions, hanging the match.
+  const benchCount = countSwitchableBench(request);
+  let slotsAlreadyFilling = 0;
   const optionLists = request.forceSwitch.map((mustSwitch, activeIndex) => {
     if (!mustSwitch) return [getPassAction(activeIndex)];
+    if (benchCount <= slotsAlreadyFilling) return [getPassAction(activeIndex)];
+    slotsAlreadyFilling += 1;
     const switches = getSwitchActions(request, true, activeIndex);
     return switches.length ? switches : [getPassAction(activeIndex)];
   });
   return combineActiveOptions(optionLists);
+}
+
+function countSwitchableBench(request) {
+  return (request.side?.pokemon || [])
+    .filter(mon => mon && !mon.active && !String(mon.condition || '').endsWith(' fnt'))
+    .length;
 }
 
 function getMoveOptionsForActive(request, active, activeIndex, includeTargets) {

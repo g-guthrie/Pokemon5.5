@@ -8,7 +8,6 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const port = Number(process.env.TOURNAMENT_SMOKE_PORT || 3206);
 const serverOrigin = `http://localhost:${port}`;
 const outDir = path.join(rootDir, 'artifacts', 'tournament-smoke');
-const ratingStorePath = path.join(outDir, 'ratings-store.json');
 const server = spawn(process.execPath, ['src/server.mjs'], {
   cwd: rootDir,
   env: {...process.env, PORT: String(port)},
@@ -41,7 +40,6 @@ async function run() {
       moveDelayMs: 1,
       timeoutMs: 12000,
       outDir,
-      ratingStorePath,
       seedBase: 880000,
       watchLocal: false,
     });
@@ -50,10 +48,9 @@ async function run() {
     assert(summary.pairCount === 3, 'wrong pair count');
     assert(summary.completedBattles === 3, 'wrong completed battle count');
     assert(summary.pairs.length === 3, 'missing pair summaries');
-    assert(Object.keys(summary.ratings || {}).length === 3, 'ratings should include all agents');
+    assert(Object.keys(summary.standings || {}).length === 3, 'standings should include all agents');
     assert(summary.summaryPath, 'missing summary path');
     JSON.parse(await fs.readFile(summary.summaryPath, 'utf8'));
-    JSON.parse(await fs.readFile(summary.ratingStorePath, 'utf8'));
     for (const pair of summary.pairs) {
       assert(pair.summaryPath, 'pair missing summary path');
       const pairSummary = JSON.parse(await fs.readFile(pair.summaryPath, 'utf8'));
@@ -69,7 +66,6 @@ async function run() {
       pairs: summary.pairCount,
       completedBattles: summary.completedBattles,
       summaryPath: summary.summaryPath,
-      ratingStorePath: summary.ratingStorePath,
     }, null, 2));
     server.kill();
     process.exit(0);

@@ -1,4 +1,4 @@
-export const OBSERVATION_SCHEMA_VERSION = 'showdown-observation.v1';
+const OBSERVATION_SCHEMA_VERSION = 'showdown-observation.v1';
 
 export function createPlayerObservation({
   role,
@@ -98,7 +98,7 @@ export function createPublicEvent(view, parts, raw, text) {
   };
 }
 
-export function createLegalChoice(action, context = {}) {
+function createLegalChoice(action, context = {}) {
   return {
     schemaType: 'LegalChoice',
     turn: context.turn ?? null,
@@ -108,7 +108,7 @@ export function createLegalChoice(action, context = {}) {
   };
 }
 
-export function getHistoryView(view) {
+function getHistoryView(view) {
   const events = view.history || [];
   return {
     recent: events.slice(-60),
@@ -117,7 +117,7 @@ export function getHistoryView(view) {
   };
 }
 
-export function normalizeField(field = {}) {
+function normalizeField(field = {}) {
   return {
     weather: normalizeConditionValue(field.weather),
     terrain: normalizeConditionValue(field.terrain),
@@ -147,7 +147,7 @@ export function touchCondition(existing, turn, args = []) {
   };
 }
 
-export function parseProtocolMetadata(args = []) {
+function parseProtocolMetadata(args = []) {
   const meta = {};
   for (const arg of args) {
     const match = String(arg).match(/^\[([^\]]+)\]\s*(.*)$/);

@@ -8,4 +8,4 @@ for (const battle of summary.battles) {
   console.log(`ladder battle ${battle.index}/${summary.battleCount}: ${battle.winnerAgent || 'draw/cap'} turn ${battle.turn ?? '-'}`);
 }
 console.log(`wrote ${summary.summaryPath}`);
-console.log(`wrote ${summary.ratingStorePath}`);
+console.log(`wrote ${summary.summaryPath}`);

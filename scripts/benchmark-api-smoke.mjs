@@ -29,6 +29,23 @@ server.on('exit', code => {
 async function run() {
   server.stdout.removeAllListeners('data');
   try {
+    const concurrentPayload = {
+      command: 'plan',
+      modelCatalog,
+      rankedCandidates: [{rank: 1, id: 'ranked/supported-a', label: 'Supported A'}],
+      openRouterLimit: 1,
+      openaiBaselines: 'openai:gpt-5.5:low',
+      battlesPerPair: 1,
+      watchLocal: false,
+    };
+    const concurrent = await Promise.all([
+      post('/api/benchmark', concurrentPayload, {expectOk: false}),
+      post('/api/benchmark', concurrentPayload, {expectOk: false}),
+    ]);
+    assert(concurrent.filter(result => result.ok).length === 1, 'exactly one concurrent benchmark plan should own the transition');
+    const transitionRefusal = concurrent.find(result => !result.ok);
+    assert(/already in progress/.test(String(transitionRefusal?.error || '')), 'concurrent benchmark plan should be refused by the transition lock');
+
     const planned = await post('/api/benchmark', {
       command: 'plan',
       modelCatalog,
@@ -74,6 +91,7 @@ async function run() {
       pairCount: planned.benchmark.pairCount,
       planPath: planned.benchmark.planPath,
       refused: refused.error,
+      concurrentTransitionRefused: transitionRefusal.error,
     }, null, 2));
     server.kill();
     process.exit(0);

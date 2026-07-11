@@ -1,13 +1,6 @@
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createAgent, parseAgentSpec, publicAgentMetadata} from './agent-runtime.mjs';
-import {
-  ensureRating,
-  loadEloStore,
-  ratingKeyForAgent,
-  ratingsSnapshot,
-  saveEloStore,
-} from './elo-store.mjs';
 import {runLadderBatch} from './ladder-runner.mjs';
 import {writeJson} from './match-runner.mjs';
 import {mergeUsageSummaries, summarizeUsage} from './usage-summary.mjs';
@@ -25,8 +18,6 @@ export async function runTournamentBatch(options = {}) {
   const outDir = options.outDir || process.env.TOURNAMENT_DIR || path.join(rootDir, 'artifacts', 'tournament-batch');
   const formatid = options.formatid || process.env.FORMATID || DEFAULT_FORMAT;
   const allowFallback = Boolean(options.allowFallback ?? process.env.ALLOW_FALLBACK === '1');
-  const ratingK = Number(options.ratingK ?? process.env.ELO_K ?? 32);
-  const ratingStorePath = options.ratingStorePath || process.env.RATING_STORE || path.join(rootDir, 'artifacts', 'ratings-store.json');
   const seedBase = Number(options.seedBase ?? process.env.SEED_BASE ?? 770000);
   const timeoutMs = options.timeoutMs ?? process.env.MATCH_TIMEOUT_MS;
   const signal = options.signal || null;
@@ -36,11 +27,7 @@ export async function runTournamentBatch(options = {}) {
   const onPairEnd = typeof options.onPairEnd === 'function' ? options.onPairEnd : null;
 
   const agents = await Promise.all(agentSpecs.map(spec => createAgent(parseAgentSpec(spec))));
-  assertDistinctRatingKeys(agents);
-
-  const eloStore = await loadEloStore(ratingStorePath);
-  for (const agent of agents) ensureRating(eloStore, agent);
-  await saveEloStore(ratingStorePath, eloStore);
+  assertDistinctAgentKeys(agents);
 
   const pairs = createPairs(agents);
   const summary = {
@@ -57,14 +44,8 @@ export async function runTournamentBatch(options = {}) {
     moveDelayMs,
     timeoutMs: timeoutMs ? Number(timeoutMs) : null,
     allowFallback,
-    ratingK,
-    ratingStorePath,
-    ratingStoreHref: artifactHrefFor(ratingStorePath),
     watchLocal,
     agents: agents.map(publicAgentMetadata),
-    ratingKeys: Object.fromEntries(agents.map(agent => [agent.name, ratingKeyForAgent(agent)])),
-    ratingsStart: ratingsSnapshot(eloStore, agents),
-    ratings: ratingsSnapshot(eloStore, agents),
     standings: createStandings(agents),
     totals: createTotals(pairs.length, battlesPerPair),
     pairs: [],
@@ -89,14 +70,12 @@ export async function runTournamentBatch(options = {}) {
       serverOrigin,
       runId: `${runId}-${pairId}`,
       outDir: pairOutDir,
-      ratingStorePath,
       battleCount: battlesPerPair,
       maxTurns,
       moveDelayMs,
       formatid,
       allowFallback,
       timeoutMs,
-      ratingK,
       seedBase: seedBase + pair.index * 10000,
       signal,
       waitIfPaused,
@@ -107,13 +86,11 @@ export async function runTournamentBatch(options = {}) {
       agentBName: pair.b.name,
     });
 
-    const freshStore = await loadEloStore(ratingStorePath);
-    const pairRecord = summarizePair(pair, pairId, pairOutDir, pairSummary, freshStore, agents);
+    const pairRecord = summarizePair(pair, pairId, pairOutDir, pairSummary);
     summary.pairs.push(pairRecord);
     addPairToTotals(summary.totals, pairSummary);
     addPairToStandings(summary.standings, pair, pairSummary);
     summary.usage = mergeUsageSummaries(summary.usage, pairSummary.usage || summarizeUsage([]));
-    summary.ratings = ratingsSnapshot(freshStore, agents);
     if (pairSummary.aborted) summary.aborted = true;
     if (onPairEnd) await onPairEnd({summary, pair: pairRecord, pairSummary});
     if (summary.aborted) break;
@@ -128,7 +105,7 @@ export async function runTournamentBatch(options = {}) {
   return summary;
 }
 
-export function normalizeAgentSpecs(value) {
+function normalizeAgentSpecs(value) {
   const raw = Array.isArray(value) ? value : String(value || '').split(',');
   const specs = raw
     .map(spec => typeof spec === 'string' ? spec.trim() : spec)
@@ -155,7 +132,7 @@ function createPairs(agents) {
   return pairs;
 }
 
-function summarizePair(pair, pairId, outDir, pairSummary, eloStore, agents) {
+function summarizePair(pair, pairId, outDir, pairSummary) {
   return {
     index: pair.index,
     pairId,
@@ -167,16 +144,11 @@ function summarizePair(pair, pairId, outDir, pairSummary, eloStore, agents) {
       a: publicAgentMetadata(pair.a),
       b: publicAgentMetadata(pair.b),
     },
-    ratingKeys: {
-      a: ratingKeyForAgent(pair.a),
-      b: ratingKeyForAgent(pair.b),
-    },
     battles: pairSummary.battles.length,
     battleCount: pairSummary.battleCount,
     totals: pairSummary.totals,
     usage: pairSummary.usage,
     aborted: Boolean(pairSummary.aborted),
-    ratingsAfter: ratingsSnapshot(eloStore, agents),
   };
 }
 
@@ -204,7 +176,7 @@ function addPairToTotals(totals, pairSummary) {
 
 function createStandings(agents) {
   return Object.fromEntries(agents.map(agent => [
-    ratingKeyForAgent(agent),
+    agentKeyFor(agent),
     {
       agent: publicAgentMetadata(agent),
       games: 0,
@@ -217,14 +189,17 @@ function createStandings(agents) {
 }
 
 function addPairToStandings(standings, pair, pairSummary) {
-  const keyA = ratingKeyForAgent(pair.a);
-  const keyB = ratingKeyForAgent(pair.b);
+  const keyA = agentKeyFor(pair.a);
+  const keyB = agentKeyFor(pair.b);
   for (const battle of pairSummary.battles || []) {
     standings[keyA].games += 1;
     standings[keyB].games += 1;
     if (!battle.validBenchmark) {
+      // Same semantics as the ladder: an invalid benchmark is counted but its
+      // outcome never contributes wins, losses, or draws to the standings.
       standings[keyA].invalidBenchmarks += 1;
       standings[keyB].invalidBenchmarks += 1;
+      continue;
     }
     if (battle.winnerAgent === 'a') {
       standings[keyA].wins += 1;
@@ -239,12 +214,18 @@ function addPairToStandings(standings, pair, pairSummary) {
   }
 }
 
-function assertDistinctRatingKeys(agents) {
+// Identity string for standings and duplicate detection — the agent's exact
+// provider:model:effort coordinates plus its distinguishing name.
+function agentKeyFor(agent) {
+  return `${agent.provider}:${agent.model}:${agent.reasoningEffort || 'none'}${agent.name ? `#${agent.name}` : ''}`;
+}
+
+function assertDistinctAgentKeys(agents) {
   const seen = new Map();
   for (const agent of agents) {
-    const key = ratingKeyForAgent(agent);
+    const key = agentKeyFor(agent);
     if (seen.has(key)) {
-      throw new Error(`Duplicate tournament rating key: ${key}`);
+      throw new Error(`Duplicate tournament agent: ${key}`);
     }
     seen.set(key, agent);
   }
@@ -256,7 +237,6 @@ function agentSpecForRunner(agent) {
     model: agent.model,
     reasoningEffort: agent.reasoningEffort || '',
     name: agent.name,
-    ratingKey: ratingKeyForAgent(agent),
     maxTokens: agent.maxTokens,
     temperature: agent.temperature,
     capturePrompts: agent.capturePrompts,

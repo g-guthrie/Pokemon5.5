@@ -127,7 +127,6 @@ export async function runOpenRouterBenchmarkSuite(options = {}) {
   const outDir = options.outDir || process.env.BENCHMARK_DIR || path.join(rootDir, 'artifacts', 'benchmark-suites', runId);
   const planPath = path.join(outDir, 'suite-plan.json');
   const summaryPath = path.join(outDir, 'summary-latest.json');
-  const ratingStorePath = options.ratingStorePath || process.env.BENCHMARK_RATING_STORE || path.join(rootDir, 'artifacts', 'ratings-store.json');
   const battleCount = clampNumber(options.battlesPerPair ?? process.env.BATTLES_PER_PAIR, 1, 10000, 2);
   const maxTurns = clampNumber(options.maxTurns ?? process.env.MAX_TURNS, 1, 10000, 40);
   const moveDelayMs = clampNumber(options.moveDelayMs ?? process.env.MOVE_DELAY_MS, 0, 60000, 20);
@@ -136,7 +135,6 @@ export async function runOpenRouterBenchmarkSuite(options = {}) {
   const serverOrigin = options.serverOrigin || process.env.SERVER_ORIGIN || 'http://localhost:3107';
   const formatid = options.formatid || plan.formatid || DEFAULT_FORMAT;
   const allowFallback = Boolean(options.allowFallback ?? process.env.ALLOW_FALLBACK === '1');
-  const ratingK = Number(options.ratingK ?? process.env.ELO_K ?? 32);
   const watchLocal = Boolean(options.watchLocal ?? process.env.BENCHMARK_WATCH_LOCAL === '1');
   const signal = options.signal || null;
   const waitIfPaused = typeof options.waitIfPaused === 'function' ? options.waitIfPaused : null;
@@ -155,8 +153,6 @@ export async function runOpenRouterBenchmarkSuite(options = {}) {
     moveDelayMs,
     timeoutMs: timeoutMs ? Number(timeoutMs) : null,
     allowFallback,
-    ratingK,
-    ratingStorePath,
     watchLocal,
     plan,
     totals: {
@@ -191,14 +187,12 @@ export async function runOpenRouterBenchmarkSuite(options = {}) {
       serverOrigin,
       runId: `${runId}-pair-${String(pair.index).padStart(3, '0')}`,
       outDir: pairDir,
-      ratingStorePath,
       battleCount,
       maxTurns,
       moveDelayMs,
       timeoutMs,
       formatid,
       allowFallback,
-      ratingK,
       seedBase: seedBase + pair.index * 10000,
       watchLocal,
       signal,
@@ -218,7 +212,6 @@ export async function runOpenRouterBenchmarkSuite(options = {}) {
       battles: pairSummary.battles.length,
       totals: pairSummary.totals,
       usage: pairSummary.usage,
-      ratings: pairSummary.ratings,
       aborted: Boolean(pairSummary.aborted),
     };
     summary.pairs.push(record);
@@ -293,7 +286,6 @@ function textOutputModel(model = {}) {
 function openRouterAgentFromModel(model, options = {}) {
   const candidate = options.candidate || {};
   const reasoningEffort = options.reasoningEffort || DEFAULT_REASONING_EFFORT;
-  const ratingKey = `openrouter:${model.id}:${reasoningEffort}`;
   return {
     provider: 'openrouter',
     rank: candidate.rank,
@@ -301,7 +293,6 @@ function openRouterAgentFromModel(model, options = {}) {
     model: model.id,
     name: model.name || model.id,
     agentSpec: `openrouter:${model.id}:${reasoningEffort}`,
-    ratingKey,
     reasoningEffort,
     selectionSource: options.selectionSource || '',
     catalog: publicModelMetadata(model),
@@ -310,7 +301,6 @@ function openRouterAgentFromModel(model, options = {}) {
       model: model.id,
       reasoningEffort,
       name: `or-${safePathPart(model.id)}`,
-      ratingKey,
     },
   };
 }
@@ -321,21 +311,18 @@ function openAIAgentFromSpec(spec, rank) {
   const reasoningEffort = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(parts.at(-1)) ? parts.pop() : DEFAULT_REASONING_EFFORT;
   const model = parts.join(':') || 'gpt-5.5';
   const normalized = `${provider}:${model}:${reasoningEffort}`;
-  const ratingKey = `${provider}:${model}:${reasoningEffort}`;
   return {
     provider,
     rank,
     model,
     name: `${provider}-${safePathPart(model)}-${reasoningEffort}`,
     agentSpec: normalized,
-    ratingKey,
     reasoningEffort,
     agentConfig: {
       provider,
       model,
       reasoningEffort,
       name: `${provider}-${safePathPart(model)}-${reasoningEffort}`,
-      ratingKey,
     },
   };
 }

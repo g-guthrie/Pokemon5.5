@@ -21,7 +21,7 @@ export const REQUIRED_ANALYSIS_FIELDS = [
   'riskAssessment',
   'candidateChoices',
 ];
-export const RESPONSE_JSON_SCHEMA_NAME = 'showdown_choice_response';
+const RESPONSE_JSON_SCHEMA_NAME = 'showdown_choice_response';
 
 // A human can scroll the entire battle log; keep the window wide enough that
 // whole games stay visible to the model.

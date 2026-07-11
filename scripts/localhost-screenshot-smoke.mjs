@@ -49,44 +49,14 @@ const arenaDom = await runChrome([
   serverOrigin,
 ]);
 
-const dom = await runChrome([
-  '--headless=new',
-  '--disable-gpu',
-  '--no-first-run',
-  '--no-default-browser-check',
-  '--disable-background-networking',
-  '--disable-component-update',
-  '--disable-sync',
-  '--virtual-time-budget=3500',
-  '--dump-dom',
-  `${serverOrigin}/operator.html`,
-]);
-
 const image = await inspectPng(outputPath);
 assert(image.bytes > 50000, `screenshot too small: ${image.bytes} bytes`);
 assert(image.width === 1440 && image.height === 1600, `unexpected screenshot size ${image.width}x${image.height}`);
 for (const needle of [
   'LLM Arena',
   'Start match',
-  'Model mind',
-  'Replays',
-  'Operator console',
 ]) {
   assert(arenaDom.includes(needle), `arena DOM missing ${needle}`);
-}
-for (const needle of [
-  'Showdown Model Arena',
-  'gen9randomdoublesbattle',
-  'Broadcast battle view',
-  'Model Decisions',
-  'P1 Observation',
-  'P2 Observation',
-  'Plan Top-10',
-  'Start Benchmark',
-  'Artifact Lab',
-  'data-arena-workflow',
-]) {
-  assert(dom.includes(needle), `rendered DOM missing ${needle}`);
 }
 
 console.log(JSON.stringify({

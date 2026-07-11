@@ -24,7 +24,7 @@ const {BattleStream, getPlayerStreams, Teams} = require(showdownRoot);
 
 const PLAYER_IDS = ['p1', 'p2'];
 
-export function sanitizePlayerName(value = '') {
+function sanitizePlayerName(value = '') {
   return String(value || '')
     .replace(/[|,\n\r]+/g, ' ')
     .replace(/\s+/g, ' ')
@@ -229,19 +229,18 @@ export class BattleSession {
     if (!PLAYER_IDS.includes(role)) throw new Error(`Invalid player role: ${role}`);
     if (typeof choice !== 'string' || !choice.trim()) throw new Error('Choice must be a non-empty string');
     const request = this.latestRequest[role];
-    // Only mark the pending request answered when this choice is actually for
-    // it. A delayed submission (paced sends, slow sockets) landing after a
-    // newer request arrived must not consume that newer request — doing so
-    // deadlocks the match: the sim keeps waiting while every client believes
-    // the request was already answered.
-    const answersLatest = rqid == null || request?.rqid == null || rqid === request.rqid;
-    if (request && answersLatest) this.consumedRequestKeys[role].add(requestKey(role, request, this.latestRequestTurn[role] || 0));
+    // rqid is the request identity contract. A delayed choice must never be
+    // relabeled as current or written into a newer simulator request.
+    if (rqid != null && (!request || request.rqid == null || Number(rqid) !== Number(request.rqid))) {
+      throw new Error(`Stale request: submitted rqid ${rqid}, latest rqid ${request?.rqid ?? 'none'}`);
+    }
+    if (request) this.consumedRequestKeys[role].add(requestKey(role, request, this.latestRequestTurn[role] || 0));
     this.emit({
       type: 'choice',
       role,
       choice: choice.trim(),
       turn: this.public.turn,
-      rqid: request?.rqid ?? null,
+      rqid: request?.rqid ?? rqid ?? null,
     });
     void this.streams[role].write(choice.trim());
   }

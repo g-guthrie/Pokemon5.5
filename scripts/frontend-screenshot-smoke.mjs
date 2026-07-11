@@ -45,7 +45,6 @@ async function run() {
     await fs.mkdir(path.dirname(outputPath), {recursive: true});
     await fs.rm(outputPath, {force: true});
     await fs.rm(narrowOutputPath, {force: true});
-    const operatorOrigin = `${serverOrigin}/operator.html`;
     await runChrome([
       '--headless=new',
       '--disable-gpu',
@@ -73,7 +72,7 @@ async function run() {
       '--window-size=705,832',
       '--virtual-time-budget=3500',
       `--screenshot=${narrowOutputPath}`,
-      operatorOrigin,
+      serverOrigin,
     ]);
 
     const arenaDom = await runChrome([
@@ -89,7 +88,10 @@ async function run() {
       serverOrigin,
     ]);
 
-    const dom = await runChrome([
+    // The Model Minds are hosted by the native client iframe, so verify that
+    // document directly instead of pretending iframe DOM is part of the
+    // parent page's --dump-dom output.
+    const mindDom = await runChrome([
       '--headless=new',
       '--disable-gpu',
       '--no-first-run',
@@ -99,21 +101,7 @@ async function run() {
       '--disable-sync',
       '--virtual-time-budget=3500',
       '--dump-dom',
-      operatorOrigin,
-    ]);
-
-    const narrowDom = await runChrome([
-      '--headless=new',
-      '--disable-gpu',
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-background-networking',
-      '--disable-component-update',
-      '--disable-sync',
-      '--window-size=705,832',
-      '--virtual-time-budget=3500',
-      '--dump-dom',
-      operatorOrigin,
+      `${serverOrigin}/showdown-frame.html?role=p1&theme=dark&drive=parent&hidecontrols=1&minds=1&wait=1`,
     ]);
 
     const image = await inspectPng(outputPath);
@@ -127,45 +115,12 @@ async function run() {
       'Player 1 agent',
       'Player 2 agent',
       'Start match',
-      'Model mind',
-      'Replays',
-      'Operator console',
-      'Replay transport',
+      'games',
     ]) {
       assert(arenaDom.includes(needle), `arena DOM missing ${needle}`);
     }
-    for (const needle of [
-      'Connected',
-      'gen9randomdoublesbattle',
-      'Arena model telemetry',
-      'Last Choices',
-      'Broadcast battle view',
-      'Model Decisions',
-      'P1 View',
-      'P2 View',
-      'Pause',
-      'Resume',
-      'P1 Observation',
-      'P2 Observation',
-      'Quick picks show 6',
-      'Filter or open a group for exact choices',
-      'Start Models',
-      'Start Ladder',
-      'Start Tournament',
-      'Plan Top-10',
-      'Start Benchmark',
-      'Artifact Lab',
-      'full-own-team',
-      'observed-public-protocol',
-    ]) {
-      assert(dom.includes(needle), `rendered DOM missing ${needle}`);
-    }
-    const choiceButtonCount = (dom.match(/data-choice=/g) || []).length;
-    assert(choiceButtonCount > 0, 'rendered DOM has no clickable legal choices');
-    assert(choiceButtonCount <= 90, `rendered DOM includes too many default legal choice buttons: ${choiceButtonCount}`);
-    assert(dom.includes('data-arena-workflow="manual"'), 'rendered DOM missing arena workflow telemetry marker');
-    assert(narrowDom.includes('data-battle-arena-columns="1"'), 'narrow viewport should show one primary broadcast client');
-    assert(narrowDom.includes('data-battle-arena-above-fold="true"'), 'narrow viewport should show the primary battle client above the fold');
+    assert(mindDom.includes('Model mind'), 'native client frame DOM missing Model mind');
+    assert(mindDom.includes('Waiting for the first decision'), 'native client frame DOM missing Model mind placeholder');
 
     clearTimeout(timeout);
     console.log(JSON.stringify({
@@ -178,7 +133,6 @@ async function run() {
       height: image.height,
       narrowWidth: narrowImage.width,
       narrowHeight: narrowImage.height,
-      choiceButtonCount,
       serverOrigin,
     }, null, 2));
     cleanupAndExit(0);

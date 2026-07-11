@@ -19,7 +19,7 @@ export function summarizeUsage(modelCalls = []) {
   return summary;
 }
 
-export function normalizeUsage(call = {}) {
+function normalizeUsage(call = {}) {
   const usage = call.usage || {};
   const promptTokens = numberFrom(
     usage.input_tokens,

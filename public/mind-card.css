@@ -1,0 +1,372 @@
+/* Model Mind columns inside the native client frame.
+   The client is a 1260x760 canvas: P1's mind at x 0-310, the battle field at
+   x 310-950, P2's mind at x 950-1260 (where the battle log used to live).
+   Dark navy glass to match the reskinned dark client. */
+
+.mind-column {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: 310px;
+  display: flex;
+  flex-direction: column;
+  background: #0f1629;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  pointer-events: auto;
+  z-index: 20;
+}
+
+.mind-column[data-side="p1"] {
+  left: 0;
+  border-right: 1px solid rgba(122, 152, 204, 0.22);
+  box-shadow: inset -14px 0 24px -18px rgba(0, 0, 0, 0.7);
+}
+
+.mind-column[data-side="p2"] {
+  right: 0;
+  border-left: 1px solid rgba(122, 152, 204, 0.22);
+  box-shadow: inset 14px 0 24px -18px rgba(0, 0, 0, 0.7);
+}
+
+/* The lit seam at the top, in the player's color. */
+.mind-column::before {
+  content: "";
+  flex: none;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, var(--mind-accent), transparent);
+  box-shadow: 0 2px 14px 1px var(--mind-accent-glow);
+}
+
+.mind-column[data-side="p1"] {
+  --mind-accent: rgba(227, 53, 13, 0.85);
+  --mind-accent-glow: rgba(227, 53, 13, 0.3);
+  --mind-player: #ff8a6b;
+}
+
+.mind-column[data-side="p2"] {
+  --mind-accent: rgba(90, 168, 232, 0.9);
+  --mind-accent-glow: rgba(90, 168, 232, 0.3);
+  --mind-player: #7db4e8;
+}
+
+.mind-column > header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 9px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mind-column .mind-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--mind-accent);
+  box-shadow: 0 0 8px var(--mind-accent);
+}
+
+.mind-column .mind-who {
+  font-weight: 700;
+  font-size: 12.5px;
+  color: #e8f0fb;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mind-column .mind-role {
+  font: 600 10px/1 ui-monospace, Menlo, Consolas, monospace;
+  color: #7e93b8;
+  letter-spacing: 1px;
+}
+
+.mind-column .action-chip {
+  margin-left: auto;
+  font: 500 10.5px/1.3 ui-monospace, Menlo, Consolas, monospace;
+  color: #a9bcd9;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 4px 8px;
+  max-width: 46%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color 200ms ease, color 200ms ease;
+}
+
+.mind-column .action-chip.fresh {
+  border-color: var(--mind-accent);
+  color: var(--mind-player);
+}
+
+
+/* ---- the mind body ---- */
+
+.mind-column .mind {
+  flex: 1;
+  min-height: 0;
+  /* Vertical scroll only: every card sizes to the column and wraps its
+     text — nothing may push the mind sideways. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: 11px 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(140, 165, 205, 0.35) transparent;
+}
+
+.mind-column .mind > * { min-width: 0; max-width: 100%; }
+
+.mind .mind-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.mind .mind-head h3 {
+  margin: 0;
+  font-size: 10.5px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: #8fa7cc;
+  font-weight: 700;
+}
+
+.mind .mind-meta {
+  margin-left: auto;
+  font: 500 10px/1 ui-monospace, Menlo, Consolas, monospace;
+  color: #7e93b8;
+}
+
+.mind .thinking {
+  font-size: 12px;
+  color: #a9bcd9;
+}
+
+.mind .mind-error {
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 112, 112, 0.45);
+  border-radius: 9px;
+  background: rgba(160, 32, 32, 0.16);
+  color: #ffb1b1;
+  font-size: 11.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.mind .thinking .shimmer {
+  display: inline-block;
+  background: linear-gradient(90deg, #7e93b8, #e8f0fb, #7e93b8);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: mind-shimmer 1.6s linear infinite;
+}
+
+@keyframes mind-shimmer {
+  to { background-position: -200% 0; }
+}
+
+/* Thought-process cards: one box per question, single column — the mind is
+   a tall narrow strip now. */
+
+.mind-sections {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.mind-section {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 12px;
+  background: #131e36;
+  padding: 8px 11px 9px;
+  border-top: 3px solid var(--mind-accent);
+}
+
+.mind-section h4 {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 0 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.3px;
+  color: #dbe6f5;
+  font-weight: 800;
+  min-width: 0;
+}
+
+.mind-section h4 span:last-child { overflow-wrap: anywhere; }
+
+.mind-section h4 .section-icon { font-size: 12px; }
+
+/* ---- card hierarchy: not all questions weigh the same ---- */
+
+/* The battle summary is the headline card. */
+.mind-section[data-key="gameStateSummary"] {
+  background: linear-gradient(180deg, #182848, #131e36);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.mind-section[data-key="gameStateSummary"] h4 { font-size: 11.5px; }
+.mind-section[data-key="gameStateSummary"] li { font-size: 12.5px; color: #c8d8ef; }
+
+/* Risk reads amber — it's the tension card. */
+.mind-section[data-key="riskAssessment"] {
+  border-top-color: rgba(224, 164, 27, 0.85);
+  background: linear-gradient(180deg, rgba(224, 164, 27, 0.08), #131e36 55%);
+}
+
+/* Threats carry a warning red. */
+.mind-section[data-key="biggestThreats"] {
+  border-top-color: rgba(214, 59, 59, 0.75);
+}
+
+/* The chosen candidate gets a lit row, not just brighter text. */
+.mind-section li.chosen-candidate {
+  background: linear-gradient(90deg, rgba(255, 203, 5, 0.14), transparent 80%);
+  border-left: 3px solid var(--mind-accent);
+  border-radius: 4px;
+  padding: 3px 6px;
+  margin: 2px 0;
+}
+
+.mind-section ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mind-section li {
+  font-size: 11.5px;
+  color: #a9bcd9;
+  padding: 1px 0;
+  overflow-wrap: anywhere;
+}
+
+.mind-section li.chosen-candidate {
+  color: #ffffff;
+  font-weight: 600;
+}
+
+
+/* Fresh decisions pop their cards in one after another. */
+.pop-in {
+  animation: mind-pop 420ms cubic-bezier(0.2, 0.9, 0.3, 1.15) both;
+}
+
+@keyframes mind-pop {
+  from { opacity: 0; transform: translateY(8px) scale(0.94); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pop-in { animation: none; }
+  .mind .thinking .shimmer { animation: none; color: #a9bcd9; background: none; }
+}
+
+.mind-raw {
+  border-top: 1px dashed rgba(255, 255, 255, 0.12);
+  padding-top: 7px;
+  margin-top: 2px;
+}
+
+.mind-raw summary {
+  cursor: pointer;
+  font: 700 10px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #7e93b8;
+}
+
+.mind-raw summary:hover { color: #e8f0fb; }
+
+.mind-raw pre {
+  margin: 6px 0 2px;
+  max-height: 220px;
+  overflow: auto;
+  font: 400 10.5px/1.5 ui-monospace, Menlo, Consolas, monospace;
+  color: #a9bcd9;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #101a30;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.mind-choice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.12);
+  padding-top: 9px;
+}
+
+/* The decision's own beat: a stronger landing than the question cards. */
+.mind-choice.choice-reveal {
+  animation-name: choice-land;
+  animation-duration: 480ms;
+}
+
+@keyframes choice-land {
+  0% { opacity: 0; transform: translateY(10px) scale(0.92); }
+  60% { opacity: 1; transform: translateY(-2px) scale(1.03); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.mind-choice .choice-chip {
+  font: 700 12.5px/1.35 ui-monospace, Menlo, Consolas, monospace;
+  padding: 7px 12px;
+  border-radius: 9px;
+  border: 1.5px solid var(--mind-accent);
+  color: var(--mind-player);
+  background: rgba(255, 255, 255, 0.05);
+  /* Long decisions (doubles + Tera + targets) wrap; they never scroll. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+
+.mind-choice .choice-label {
+  font-size: 11.5px;
+  color: #a9bcd9;
+  flex: 1;
+  min-width: 120px;
+}
+
+.mind-choice .invalid {
+  color: #ff9d8a;
+  font: 600 11px/1 ui-monospace, Menlo, Consolas, monospace;
+}
+
+/* Human play: the opponent's mind card carries its own peek/hide toggle —
+   dark by default, one tap to watch it think while you play against it. */
+.mind .mind-peek-btn {
+  appearance: none;
+  align-self: flex-start;
+  margin: 2px 0 8px;
+  border: 1px solid rgba(255, 203, 5, 0.45);
+  border-radius: 999px;
+  background: rgba(59, 45, 5, 0.55);
+  color: #ffd94d;
+  font: 700 10.5px/1 ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease;
+}
+
+.mind .mind-peek-btn:hover {
+  border-color: rgba(255, 203, 5, 0.9);
+  color: #ffe98f;
+}

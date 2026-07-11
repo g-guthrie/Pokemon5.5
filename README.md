@@ -15,18 +15,17 @@ using the vendored Showdown server simulator, random team generator, and client.
 - `src/prompt-pipeline.mjs`: versioned model prompt and response contract.
 - `src/agent-runtime.mjs`: shared stand-in, OpenAI, and OpenRouter agent interface.
 - `src/match-runner.mjs`: websocket match runner and JSON artifact writer.
-- `src/event-log.mjs`: newline-delimited event stream writer for replay/indexing.
+- `src/event-log.mjs`: newline-delimited event stream writer for indexing/analysis.
 - `src/usage-summary.mjs`: provider-neutral token/cost usage normalization.
-- `src/ladder-runner.mjs`: pairwise battle batches with Elo updates.
+- `src/ladder-runner.mjs`: pairwise battle batches with win/loss summaries.
+- `src/series-store.mjs`: persistent per-matchup series records for the arena.
+- `src/transcript.mjs`: plain-text match transcripts for post-game AI analysis.
 - `src/tournament-runner.mjs`: round-robin scheduler over multiple model specs.
 - `src/server.mjs`: local web server, websocket API, reset API, artifact browser.
 - `public/index.html` + `public/arena.js`: the LLM Arena — a spectator UI with
   live model-vs-model viewing, per-model reasoning panels, animated button
-  clicks inside the official Showdown client, and a replay theater that plays
-  back any match artifact.
-- `public/operator.html` + `public/dual.js`: the operator console with raw
-  observations, quick-pick legal choices, ladder/tournament/benchmark controls,
-  and the artifact lab.
+  clicks inside the official Showdown client, multi-game runs, and running
+  series records per matchup.
 
 ## Setup
 
@@ -46,7 +45,7 @@ one exact legal choice — and the arena visualizes those structured choices as
 animated button presses, like watching two joysticks drive one screen.
 
 The stage is literally the native Showdown client, in its official dark
-theme. The **Live** tab starts a model-vs-model match (agent specs like
+theme. The arena starts a model-vs-model match (agent specs like
 `standin`, `openai:gpt-5.5:low`, `openrouter:<slug>:<effort>`) and shows
 Player 1's complete native client — field, battle log, and real controls.
 When it is Player 2's turn to act, Player 2's native controls appear over the
@@ -58,32 +57,40 @@ side's "model mind" panel shows the structured tactical analysis behind the
 choice (board read, win paths, setup lines, sweep plans, threats, candidate
 choices, risk, and the final choice).
 
-The **Replays** tab lists every recorded match artifact (`/api/replays`) and
-plays it back through the same native stage: Player 1's recorded protocol
-drives the client, Player 2's recorded protocol drives the alternating
-controls, each decision is anchored to the exact request (`rqid`) that
-produced it, presses are re-animated on the real buttons, and the full
-recorded reasoning shows in sync. A transport bar gives play/pause,
-per-decision stepping, 0.5–4x speed, and a decision scrubber. Replays render
-entirely client-side from the `showdown-match-artifact.v1` JSON.
+**You can take the controls yourself**: pick "🎮 You" as Player 1 and the
+decision deck stops re-enacting and becomes your actual controls — click a
+move, aim it from the target flyout, arm Tera, pick switches; every press is
+validated against the exact legal choice space before it submits (agent spec
+`human`, always Player 1). While you play, the AI opponent's mind panel and
+private board stay hidden (the server withholds them from run summaries);
+when the game ends its full reasoning is revealed. Human games count into
+the same series records and write the same transcripts.
+
+A **games** picker runs the same matchup back-to-back (1–100 games per
+start); the server plays them in sequence on the same stage and records each
+result. Every finished game also rolls into a persistent **series record**
+for that exact model pairing — run one game, come back later and run five
+more, and the record keeps accumulating until either model changes (the
+series score chip resets it on click). `GET/POST /api/series` expose the
+records. Each game also writes a plain-text **transcript** artifact
+(`*.transcript.txt`: full teams, every decision with the model's stated
+reason, and the public play-by-play) — the ⧉ transcript button copies the
+latest one for pasting into an AI for post-game analysis.
 
 **Theater mode** (the `⛶` button on the stage, or the `t` key; `Esc` exits)
 hides everything except the native client, scaled to fill the screen — the
 whole display is just the official Showdown client with two models invisibly
 at the controls.
 
-The operator console at `/operator.html` keeps the raw observation panels,
-quick-pick legal choices, ladder/tournament/benchmark controls, and the
-artifact lab.
-
-The operator console includes a local model run panel. `Start Models` runs the configured
-agents against the visible `local` battle, so the two official Showdown clients
-show the model-vs-model battle live. The arena header shows the current workflow,
-agent matchup, last selected choices, usage totals, and pause/resume controls for
-the active model run, ladder, or tournament. Use `standin`, `openai:<model>:<effort>`,
-or `openrouter:<model>:<effort>` agent specs. Pause/resume applies before the
-next model decision; stop aborts the run, propagates cancellation to in-flight
-provider fetches, and marks the artifact invalid.
+Batch workflows run from the CLI: `npm run ladder:batch` for head-to-head ladders,
+`npm run tournament:batch` for round-robins, and `npm run benchmark:openrouter`
+for the top-model suite; their `/api/ladder`, `/api/tournament`, and
+`/api/benchmark` endpoints stay available for scripting. Use `standin`,
+`human` (live runs, Player 1 only), `openai:<model>:<effort>`, or
+`openrouter:<model>:<effort>` agent specs.
+Pause/resume applies before the next model decision; stop aborts the run,
+propagates cancellation to in-flight provider fetches, and marks the artifact
+invalid.
 Provider agents default to `AGENT_MAX_TOKENS=16384` and request strict structured
 JSON with the exact legal choices in the schema, so tactical notes plus the final
 choice stay parseable. Override that environment value if you want a cheaper or
@@ -92,16 +99,19 @@ larger response budget.
 ## Secrets
 
 Do not put API keys in prompts, source files, artifacts, command output, or docs.
-Use only local environment values:
+CLI and operator workflows use local environment values:
 
 ```sh
 OPENAI_API_KEY=...
 OPENROUTER_API_KEY=...
 ```
 
-The provider adapters read only process environment variables. They do not read
-`.env` files or credentials from other projects. Keep shell history and local
-process managers responsible for injecting those values.
+The public arena currently accepts only an OpenRouter key. It stores that key in
+the visitor's browser `localStorage` until the visitor explicitly changes or
+logs out, sends it to the server only when starting a match, and the server
+clears its in-memory run copy as soon as the match ends. Keys are never written
+to artifacts. The adapters do not read `.env` files or credentials from other
+projects.
 
 ## One Battle
 
@@ -144,7 +154,7 @@ npm run openai:preflight
 AGENT=openrouter:openai/gpt-4o-mini:low npm run provider:preflight
 ```
 
-## Elo Ladder
+## Ladder Batches
 
 Pairwise ladder batch with alternating sides and deterministic seeds:
 
@@ -158,11 +168,7 @@ npm run ladder:batch
 
 This writes one JSON artifact and one `.events.jsonl` stream per battle plus
 `artifacts/ladder-local/summary-latest.json` with wins, invalid benchmark count,
-usage/error totals, side mapping, seeds, and Elo ratings.
-
-Ratings persist across runs in `artifacts/ratings-store.json` by default. Override
-with `RATING_STORE=...`. Rating keys are based on provider, model, and reasoning
-effort, so run labels can change without creating a new model identity.
+usage/error totals, side mapping, and seeds.
 
 The browser can also launch a watched ladder batch with the same run code. Use
 the ladder controls next to the model run panel, or call:
@@ -180,8 +186,8 @@ curl -X POST http://localhost:3107/api/ladder -H 'content-type: application/json
 
 `watchLocal: true` runs each ladder battle through the visible `local` battle so
 the two official clients show the batch live. The CLI and browser ladder both use
-`src/ladder-runner.mjs`, write per-battle JSON/JSONL artifacts, update Elo, and
-write a `showdown-ladder-summary.v1` summary.
+`src/ladder-runner.mjs`, write per-battle JSON/JSONL artifacts, and write a
+`showdown-ladder-summary.v1` summary.
 
 ## Tournaments
 
@@ -195,9 +201,8 @@ npm run tournament:batch
 ```
 
 This schedules every unique pair, calls `src/ladder-runner.mjs` for each pair,
-updates the same Elo store, and writes `showdown-tournament-summary.v1` with
-pair summaries, standings, usage totals, final ratings, and links to every
-underlying battle/event artifact.
+and writes `showdown-tournament-summary.v1` with pair summaries, standings,
+usage totals, and links to every underlying battle/event artifact.
 
 The browser can also launch a watched tournament:
 
@@ -220,8 +225,8 @@ operator workflow.
 
 The OpenRouter comparison suite builds a cross-provider matrix: selected
 OpenRouter models vs direct OpenAI baselines. It uses the same canonical doubles
-runner and Elo store as ladder batches, but avoids accidentally running every
-OpenRouter model against every other OpenRouter model.
+runner as ladder batches, but avoids accidentally running every OpenRouter
+model against every other OpenRouter model.
 
 Plan the current suite without paid model calls:
 
@@ -264,9 +269,8 @@ npm run benchmark:openrouter -- run
 
 The paid run writes `showdown-openrouter-benchmark-run.v1` under
 `artifacts/benchmark-suites/<run-id>/summary-latest.json`, with one ladder
-summary per OpenAI-vs-OpenRouter pair, usage/cost metadata, invalid benchmark
-counts, and Elo updates through `BENCHMARK_RATING_STORE` or
-`artifacts/ratings-store.json`.
+summary per OpenAI-vs-OpenRouter pair, usage/cost metadata, and invalid
+benchmark counts.
 
 The browser exposes the same workflow through `/api/benchmark`. Planning is
 always no-paid; starting a run requires an explicit `runPaidBenchmark: true`
@@ -424,7 +428,7 @@ Match artifacts use `showdown-match-artifact.v1` and include:
 - prompts, raw model text, response IDs, usage/cost metadata when provided;
 - parsed model tactical analysis fields when provided;
 - normalized `usage` buckets by role, provider, and model;
-- public/private protocol chunks needed for replay/debugging;
+- public/private protocol chunks needed for transcripts/debugging;
 - `eventsPath`/`eventsHref` for the matching `showdown-event-log.v1` JSONL
   stream;
 - final state summaries, winner, turn, errors, and benchmark validity.
@@ -433,7 +437,7 @@ Event streams use `showdown-event-log.v1` with one JSON object per line:
 
 - `match_start` and `match_end` records for seed, format, agents, team hashes,
   result, benchmark validity, and usage;
-- `hello` and `protocol` records for websocket/protocol replay context;
+- `hello` and `protocol` records for websocket/protocol context;
 - `observation` records with role, turn, request ID, visible active Pokemon,
   known own-team details, revealed opponent info, exact legal choice summaries,
   and the hidden-info source marker;
@@ -443,18 +447,22 @@ Event streams use `showdown-event-log.v1` with one JSON object per line:
   `callIndex`.
 
 Ladder summaries use `showdown-ladder-summary.v1` and include per-battle seed,
-side mapping, winner, validity, errors, `eventsPath`/`eventsHref`, and ratings
-after each battle.
+side mapping, winner, validity, errors, and `eventsPath`/`eventsHref`.
 
 Tournament summaries use `showdown-tournament-summary.v1` and include agent
-metadata, pair records, per-agent standings, aggregate usage/error totals,
-rating snapshots, and links to each pair's ladder summary.
+metadata, pair records, per-agent standings, aggregate usage/error totals, and
+links to each pair's ladder summary.
+
+Series records live in `artifacts/series-store.json`
+(`showdown-series-store.v1`), keyed by session and exact model pairing, with
+running totals and one entry per counted game (winner, turns, artifact and
+transcript links). Aborted games never count.
 
 ## Deploy
 
 The server is multi-tenant: every browser gets a persistent session ID
-(localStorage) and its own battle (`s-<session>`), run slot, and replay scope.
-Replays without a session (CLI/legacy runs) show in everyone's public gallery.
+(localStorage) and its own battle (`s-<session>`), run slot, and series
+records.
 
 ```sh
 docker build -t showdown-llm-arena .
@@ -468,7 +476,9 @@ Environment variables:
 | `PORT` | `8123` | HTTP + WebSocket listen port. |
 | `TRUST_PROXY` | off | Set `1` behind a reverse proxy so `x-forwarded-for` drives per-visitor rate limits. Never enable when directly exposed. |
 | `MAX_CONCURRENT_RUNS` | `3` | Global cap on simultaneous live model matches (1–16). |
-| `MAX_LIVE_ARTIFACTS` | `400` | Newest live-run replay artifacts retained on disk; older pairs are pruned at run start. |
+| `MAX_COMPLETED_LIVE_RUNS` | `250` | Maximum completed visitor run summaries retained in memory. |
+| `LIVE_RUN_RETENTION_MS` | `86400000` | Maximum age of completed visitor run summaries retained in memory. |
+| `MAX_LIVE_ARTIFACTS` | `400` | Newest live-run match artifacts retained on disk; older ones (with their event logs and transcripts) are pruned at run start. |
 | `OPENROUTER_API_KEY` | unset | Optional house key. Visitors normally bring their own key, which is held in memory for the run only and never written to artifacts. |
 
 Operational notes:
@@ -479,7 +489,7 @@ Operational notes:
   the Dockerfile wires it into `HEALTHCHECK`.
 - `SIGTERM`/`SIGINT` abort in-flight runs and close sockets gracefully.
 - Rate limits: run starts 6/min/IP, key validation 10/min/IP.
-- Mount `/app/artifacts` as a volume if replays should survive redeploys.
+- Mount `/app/artifacts` as a volume if match artifacts and series records should survive redeploys.
 
 ## Verification
 
@@ -571,14 +581,16 @@ and that fake OpenAI/OpenRouter calls do not leak keys or seeds into prompts.
 real websocket match runner and proves provider artifacts include prompts, raw
 responses, usage metadata, schema markers, legal choices, and prompt/response
 event refs without paid calls or key/seed leakage.
+`smoke:human` proves a human-controlled side plays over its own websocket:
+the runner never chooses for it, the AI mind stays hidden mid-game and is
+revealed after, and the game lands in the series record with a transcript.
 `smoke:abort` proves OpenAI and OpenRouter adapter fetches receive the runner
 AbortSignal without using the network. `smoke:redaction` proves key-shaped agent
-metadata is scrubbed from failed-run artifacts and Elo-facing identifiers.
+metadata is scrubbed from failed-run artifacts.
 `smoke:ladder-ui` proves `/api/ladder`
-can run a watched browser ladder batch, write a summary, and update the
-persistent rating store.
+can run a watched browser ladder batch and write a summary.
 `smoke:tournament` proves the reusable round-robin scheduler writes pair
-summaries and ratings; `smoke:tournament-api` proves `/api/tournament` can run
+summaries and standings; `smoke:tournament-api` proves `/api/tournament` can run
 the same scheduler through the browser server controls. `smoke:benchmark-suite`
 proves the OpenRouter-vs-OpenAI suite planner keeps canonical random doubles and
 strict-output model filtering. `smoke:benchmark-api` proves `/api/benchmark`

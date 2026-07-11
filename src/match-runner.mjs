@@ -59,16 +59,21 @@ export async function runWebSocketMatch(options = {}) {
     await resetBattle({serverOrigin, battleId, formatid, seed, playerNames});
   }
 
+  // Human-controlled sides: the runner never chooses for them. Their choices
+  // arrive straight from the player's browser socket to the battle session,
+  // and the runner records them off the resulting 'choice' broadcast.
+  const humanRoles = ['p1', 'p2'].filter(role => agents[role].provider === 'human');
+
   const run = {
     schemaVersion: 'showdown-match-artifact.v1',
     startedAt: new Date().toISOString(),
     serverOrigin,
     serverUrl,
-    // Which visitor session produced this match (empty = local/CLI/legacy,
-    // treated as the public gallery by the replays endpoint).
+    // Which visitor session produced this match (empty = local/CLI/legacy).
     sessionId: sanitizeText(String(options.sessionId || '')).slice(0, 24),
     battleId,
     formatid,
+    humanRoles,
     seed: seed || null,
     maxTurns,
     moveDelayMs,
@@ -153,6 +158,9 @@ export async function runWebSocketMatch(options = {}) {
           });
         }
       }
+      if (message.type === 'choice' && message.role === client.role && humanRoles.includes(client.role)) {
+        recordHumanAction(client.role, message);
+      }
       if (message.type === 'end') void finish(message.data);
       if (message.type === 'error') {
         run.validBenchmark = false;
@@ -205,7 +213,16 @@ export async function runWebSocketMatch(options = {}) {
     captureTeamSnapshot(run, client.role, observation, observationRecord);
     notify(onObservation, {run, observationRecord});
 
+    if (agent.provider === 'human') {
+      // The player answers from their own browser; mark the request seen so
+      // re-broadcasts of the same state don't duplicate the observation.
+      client.choosing.delete(choiceKey);
+      client.choices.add(choiceKey);
+      return;
+    }
+
     let decision;
+    let recordedCallIndex = null;
     try {
       decision = await chooseWithAgent(agent, client.role, observation, legalActions, {allowFallback, signal, modelTimeoutMs});
     } catch (error) {
@@ -224,12 +241,22 @@ export async function runWebSocketMatch(options = {}) {
       };
       call.observationIndex = observationIndex;
       call.error = sanitizeText(error.message);
-      run.modelCalls.push(call);
-      run.usage = summarizeUsage(run.modelCalls);
       run.validBenchmark = false;
       if (error.name === 'InvalidModelChoiceError') run.invalidChoiceCount += 1;
       else if (agent.provider !== 'standin') run.apiErrorCount += 1;
-      notify(onModelCall, {run, call, callIndex: run.modelCalls.length - 1, observationRecord});
+      // One failed decision is one record: the safe fallback move is folded
+      // into this same call rather than pushed as a second wrapped copy,
+      // which double counted the failure in invalid/fallback/usage totals.
+      const action = allowFallback ? firstSafeAction(legalActions) : null;
+      if (action) {
+        call.choice = action.choice;
+        call.fallback = true;
+        run.fallbackCount += 1;
+      }
+      run.modelCalls.push(call);
+      run.usage = summarizeUsage(run.modelCalls);
+      recordedCallIndex = run.modelCalls.length - 1;
+      notify(onModelCall, {run, call, callIndex: recordedCallIndex, observationRecord});
       if (!allowFallback) {
         await finish({
           winner: null,
@@ -239,28 +266,22 @@ export async function runWebSocketMatch(options = {}) {
         });
         return;
       }
-      const action = firstSafeAction(legalActions);
-      decision = {
-        action,
-        call: {
-          ...call,
-          choice: action?.choice || '',
-          fallback: true,
-        },
-      };
+      decision = {action, call};
     }
 
     client.choosing.delete(choiceKey);
     if (!decision?.action || finished) return;
     client.choices.add(choiceKey);
     decision.call.observationIndex = observationIndex;
-    if (!decision.call.valid) run.invalidChoiceCount += 1;
-    if (decision.call.fallback) run.fallbackCount += 1;
-    if (!decision.call.valid || decision.call.fallback) run.validBenchmark = false;
-    const callIndex = run.modelCalls.length;
-    run.modelCalls.push(decision.call);
-    run.usage = summarizeUsage(run.modelCalls);
-    notify(onModelCall, {run, call: decision.call, callIndex, observationRecord});
+    const callIndex = recordedCallIndex ?? run.modelCalls.length;
+    if (recordedCallIndex == null) {
+      if (!decision.call.valid) run.invalidChoiceCount += 1;
+      if (decision.call.fallback) run.fallbackCount += 1;
+      if (!decision.call.valid || decision.call.fallback) run.validBenchmark = false;
+      run.modelCalls.push(decision.call);
+      run.usage = summarizeUsage(run.modelCalls);
+      notify(onModelCall, {run, call: decision.call, callIndex, observationRecord});
+    }
 
     setTimeout(() => {
       if (finished || client.ws.readyState !== WebSocket.OPEN) return;
@@ -279,6 +300,51 @@ export async function runWebSocketMatch(options = {}) {
       notify(onAction, {run, actionRecord, call: decision.call, observationRecord});
       console.log(`${client.role} turn ${state.turn}: ${decision.action.choice}`);
     }, moveDelayMs);
+  }
+
+  // A human's submitted choice, echoed back by the battle session. Recorded
+  // as an action plus a pseudo model-call so artifact links (callIndex,
+  // observationIndex) and the event log stay uniform.
+  function recordHumanAction(role, message) {
+    if (finished) return;
+    const observationRecord = [...run.observations].reverse().find(record =>
+      record.role === role &&
+      (message.rqid == null || record.requestId == null || Number(record.requestId) === Number(message.rqid)));
+    const legal = observationRecord?.legalActions || [];
+    const matchedAction = legal.find(item => item.choice === message.choice) || null;
+    const callIndex = run.modelCalls.length;
+    const call = {
+      at: new Date().toISOString(),
+      role,
+      provider: 'human',
+      agent: agents[role].name,
+      model: 'human',
+      reasoningEffort: '',
+      observationIndex: observationRecord?.index ?? null,
+      requestedChoice: message.choice,
+      choice: message.choice,
+      // valid certifies the choice was one of the legal actions we showed;
+      // input arriving outside that set (tampered client) must not be
+      // stamped valid in the artifact.
+      valid: Boolean(matchedAction),
+      fallback: false,
+      reason: matchedAction ? 'human player input' : 'human input did not match a known legal action',
+    };
+    run.modelCalls.push(call);
+    run.usage = summarizeUsage(run.modelCalls);
+    notify(onModelCall, {run, call, callIndex, observationRecord});
+    const actionRecord = {
+      at: new Date().toISOString(),
+      role,
+      turn: message.turn ?? observationRecord?.turn ?? null,
+      requestId: message.rqid ?? null,
+      choice: message.choice,
+      action: matchedAction || {choice: message.choice, command: message.choice, label: message.choice},
+      observationIndex: observationRecord?.index ?? null,
+      callIndex,
+    };
+    run.actions.push(actionRecord);
+    notify(onAction, {run, actionRecord, call, observationRecord});
   }
 
   async function finish(data = {}) {
@@ -336,6 +402,7 @@ export async function resetBattle({serverOrigin, battleId = DEFAULT_BATTLE_ID, f
 // "anthropic/claude-sonnet-4.6" → "claude-sonnet-4.6"; stand-ins keep their
 // plain names. Kept short and protocol-safe for the Showdown player field.
 function playerDisplayName(agent = {}) {
+  if (agent.provider === 'human') return 'Human';
   if (agent.provider === 'standin' || agent.provider === 'heuristic') return agent.provider;
   const model = String(agent.model || agent.name || 'player');
   const base = model.includes('/') ? model.split('/').pop() : model;

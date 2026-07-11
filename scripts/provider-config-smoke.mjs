@@ -8,7 +8,6 @@ import {
   publicAgentMetadata,
   validateProviderConfig,
 } from '../src/agent-runtime.mjs';
-import {ensureRating, ratingKeyForAgent} from '../src/elo-store.mjs';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const envPath = path.join(rootDir, '.env');
@@ -216,15 +215,10 @@ function assertPublicMetadataRedaction() {
     provider: 'openrouter',
     model: `model-${keyLike}`,
     name: `name-${keyLike}`,
-    ratingKey: `rating-${keyLike}`,
     reasoningEffort: 'low',
   };
   const metadata = publicAgentMetadata(agent);
   assert(!JSON.stringify(metadata).includes(keyLike), 'public metadata leaked key-like agent text');
-  assert(!ratingKeyForAgent(agent).includes(keyLike), 'rating key leaked key-like agent text');
-  const store = {ratings: {}, events: []};
-  ensureRating(store, agent);
-  assert(!JSON.stringify(store).includes(keyLike), 'Elo store leaked key-like agent text');
 }
 
 function restoreEnv(name, value) {

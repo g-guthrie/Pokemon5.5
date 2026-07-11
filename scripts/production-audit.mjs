@@ -37,10 +37,8 @@ const sources = {
   agentRuntime: await readTextMaybe('src/agent-runtime.mjs'),
   benchmarkSuite: await readTextMaybe('src/benchmark-suite.mjs'),
   server: await readTextMaybe('src/server.mjs'),
-  publicIndex: await readTextMaybe('public/operator.html'),
   publicArena: await readTextMaybe('public/index.html'),
   publicArenaRuntime: await readTextMaybe('public/arena.js'),
-  publicDual: await readTextMaybe('public/dual.js'),
 };
 
 audit();
@@ -89,7 +87,6 @@ function audit() {
   auditTournament();
   auditBenchmarkSuite();
   auditFrontend();
-  auditFrontendLegalChoiceCap();
   auditDocs();
   auditSecurity();
   auditPaidPreflight();
@@ -127,21 +124,17 @@ function auditArchitecture() {
     'src/agent-runtime.mjs',
     'src/match-runner.mjs',
     'src/event-log.mjs',
-    'src/elo-store.mjs',
     'src/ladder-runner.mjs',
     'src/tournament-runner.mjs',
     'src/benchmark-suite.mjs',
     'src/server.mjs',
     'public/index.html',
     'public/arena.js',
-    'public/operator.html',
-    'public/dual.js',
-    'public/style.css',
   ];
   const missing = required.filter(relative => !existsSyncish(relative));
   add({
     id: 'module-boundaries',
-    title: 'Core architecture is split into explicit engine, extraction, runner, rating, API, and UI modules',
+    title: 'Core architecture is split into explicit engine, extraction, runner, API, and UI modules',
     status: missing.length ? 'fail' : 'pass',
     evidence: evidencePaths(required.filter(relative => !missing.includes(relative))),
     details: {missing, required},
@@ -367,24 +360,19 @@ function auditReproducibility() {
 
 function auditLadder() {
   add({
-    id: 'elo-ladder',
-    title: 'Ladder batches update durable Elo ratings across model configs',
+    id: 'ladder-batches',
+    title: 'Ladder batches produce durable win/loss summaries across model configs',
     status: all([
       verifyCheck('standin-ladder-batch')?.ok,
       ladder?.schemaVersion === 'showdown-ladder-summary.v1',
       ladder?.battleCount >= 1,
-      Object.keys(ladder?.ratings || {}).length >= 2,
-      existsSyncish('artifacts/verification/ladder-batch/ratings-store.json'),
     ]) ? 'pass' : 'fail',
     evidence: evidencePaths([
       'src/ladder-runner.mjs',
-      'src/elo-store.mjs',
       'artifacts/verification/ladder-batch/summary-latest.json',
-      'artifacts/verification/ladder-batch/ratings-store.json',
     ]),
     details: {
       battleCount: ladder?.battleCount || 0,
-      ratings: Object.keys(ladder?.ratings || {}),
     },
   });
 }
@@ -392,13 +380,12 @@ function auditLadder() {
 function auditTournament() {
   add({
     id: 'tournament-runner',
-    title: 'Round-robin tournaments produce pair summaries, standings, usage, and ratings',
+    title: 'Round-robin tournaments produce pair summaries, standings, and usage',
     status: all([
       verifyCheck('tournament')?.ok,
       verifyCheck('tournament-api')?.ok,
       tournament?.schemaVersion === 'showdown-tournament-summary.v1',
       tournament?.completedBattles >= 3,
-      Object.keys(tournament?.ratings || {}).length >= 2,
     ]) ? 'pass' : 'fail',
     evidence: evidencePaths([
       'src/tournament-runner.mjs',
@@ -408,7 +395,6 @@ function auditTournament() {
     ]),
     details: {
       completedBattles: tournament?.completedBattles || 0,
-      ratings: Object.keys(tournament?.ratings || {}),
     },
   });
 }
@@ -419,7 +405,7 @@ function auditBenchmarkSuite() {
   const openaiBaselines = benchmarkSuite?.openaiBaselines || [];
   add({
     id: 'openrouter-top-benchmark-suite',
-    title: 'OpenRouter top-model benchmark suite plans OpenRouter-vs-OpenAI Elo pairs with roster provenance',
+    title: 'OpenRouter top-model benchmark suite plans OpenRouter-vs-OpenAI pairs with roster provenance',
     status: all([
       verifyCheck('benchmark-suite')?.ok,
       benchmarkSuite?.schemaVersion === 'showdown-openrouter-benchmark-suite.v1',
@@ -432,14 +418,10 @@ function auditBenchmarkSuite() {
       sources.benchmarkSuite.includes('runOpenRouterBenchmarkSuite'),
       sources.benchmarkSuite.includes('OPENROUTER_WEEKLY_USAGE_TOP_CANDIDATES'),
       sources.server.includes('/api/benchmark'),
-      sources.publicIndex.includes('benchmark-status'),
-      sources.publicDual.includes('renderBenchmarkControl'),
     ]) ? 'pass' : 'fail',
     evidence: evidencePaths([
       'src/benchmark-suite.mjs',
       'src/server.mjs',
-      'public/index.html',
-      'public/dual.js',
       'scripts/openrouter-top-suite.mjs',
       'scripts/benchmark-suite-smoke.mjs',
       'scripts/benchmark-api-smoke.mjs',
@@ -461,12 +443,10 @@ function auditFrontend() {
   const frontendSmokeScreenshotExists = existsSyncish('artifacts/frontend-screenshot-smoke.png');
   add({
     id: 'browser-control-room',
-    title: 'Browser UI exposes the arena, observation lab, live model runs, ladder, tournament, benchmark, and artifact trace views',
+    title: 'Browser UI exposes the arena, live model runs, series records, ladder, tournament, and benchmark views',
     status: all([
       existsSyncish('public/index.html'),
       existsSyncish('public/arena.js'),
-      existsSyncish('public/operator.html'),
-      existsSyncish('public/dual.js'),
       existsSyncish('public/showdown-frame.html'),
       existsSyncish('public/showdown-adapter.js'),
       verifyCheck('live-run-api')?.ok,
@@ -476,17 +456,11 @@ function auditFrontend() {
       verifyCheck('benchmark-api')?.ok,
       frontendSmokeScreenshotExists,
       sources.publicArena.includes('LLM Arena'),
-      sources.publicArenaRuntime.includes('ReplayEngine'),
-      sources.publicIndex.includes('arena-telemetry'),
-      sources.publicIndex.includes('benchmark-status'),
-      sources.publicDual.includes('renderArenaTelemetry'),
-      sources.publicDual.includes('renderBenchmarkControl'),
+      sources.publicArenaRuntime.includes('gameCount'),
     ]) ? 'pass' : 'fail',
     evidence: evidencePaths([
       'public/index.html',
       'public/arena.js',
-      'public/operator.html',
-      'public/dual.js',
       'public/showdown-frame.html',
       'public/showdown-adapter.js',
       'artifacts/showdown-observation-lab-production.png',
@@ -502,40 +476,6 @@ function auditFrontend() {
       benchmarkApiOk: Boolean(verifyCheck('benchmark-api')?.ok),
       screenshotExists,
       frontendSmokeScreenshotExists,
-      arenaTelemetryMarkup: sources.publicIndex.includes('arena-telemetry'),
-      benchmarkMarkup: sources.publicIndex.includes('benchmark-status'),
-      arenaTelemetryRuntime: sources.publicDual.includes('renderArenaTelemetry'),
-      benchmarkRuntime: sources.publicDual.includes('renderBenchmarkControl'),
-    },
-  });
-}
-
-function auditFrontendLegalChoiceCap() {
-  const quickPickLimit = constantNumber(sources.publicDual, 'ACTION_QUICK_PICK_LIMIT');
-  const defaultGroupLimit = constantNumber(sources.publicDual, 'ACTION_DEFAULT_GROUP_LIMIT');
-  const filterGroupLimit = constantNumber(sources.publicDual, 'ACTION_FILTER_GROUP_LIMIT');
-  add({
-    id: 'frontend-legal-choice-cap',
-    title: 'Observation panels avoid dumping hundreds of legal buttons by default while preserving searchable exact choices',
-    status: all([
-      quickPickLimit > 0,
-      quickPickLimit <= 8,
-      defaultGroupLimit > 0,
-      defaultGroupLimit <= 12,
-      filterGroupLimit >= 40,
-      sources.publicDual.includes('renderQuickPicks'),
-      sources.publicDual.includes('selectQuickPicks'),
-      sources.publicDual.includes("filterActive ? 'open' : ''"),
-      sources.publicDual.includes('Filter or open a group for exact choices'),
-    ]) ? 'pass' : 'fail',
-    evidence: evidencePaths([
-      'public/dual.js',
-      'public/style.css',
-    ]),
-    details: {
-      quickPickLimit,
-      defaultGroupLimit,
-      filterGroupLimit,
     },
   });
 }
@@ -544,7 +484,7 @@ function auditDocs() {
   const terms = [
     '## Setup',
     '## Secrets',
-    '## Elo Ladder',
+    '## Ladder Batches',
     '## Tournaments',
     '## Benchmark Contract',
     '## Artifact Shape',
@@ -567,7 +507,7 @@ function auditDocs() {
 function auditSecurity() {
   add({
     id: 'secret-and-redaction-gates',
-    title: 'Source, docs, artifacts, logs, metadata, prompts, and rating keys are guarded against secret leakage',
+    title: 'Source, docs, artifacts, logs, metadata, and prompts are guarded against secret leakage',
     status: all([
       verify?.ok,
       verifyCheck('secret-scan')?.ok,

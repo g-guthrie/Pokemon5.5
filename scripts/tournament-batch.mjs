@@ -13,4 +13,4 @@ for (const pair of summary.pairs) {
   );
 }
 console.log(`wrote ${summary.summaryPath}`);
-console.log(`wrote ${summary.ratingStorePath}`);
+console.log(`wrote ${summary.summaryPath}`);

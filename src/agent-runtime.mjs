@@ -37,7 +37,7 @@ export function parseAgentSpec(spec = 'standin') {
   return normalizeAgentConfig({provider, model, reasoningEffort});
 }
 
-export function normalizeAgentConfig(config = {}) {
+function normalizeAgentConfig(config = {}) {
   const provider = (config.provider || 'standin').trim().toLowerCase();
   const model = config.model || defaultModelFor(provider);
   const reasoningEffort = config.reasoningEffort || defaultReasoningFor(provider);
@@ -47,7 +47,6 @@ export function normalizeAgentConfig(config = {}) {
     model,
     reasoningEffort,
     name: sanitizeText(config.name || `${provider}:${publicModel}${reasoningEffort ? `:${reasoningEffort}` : ''}`),
-    ratingKey: sanitizeText(config.ratingKey || `${provider}:${publicModel}:${reasoningEffort || 'none'}`),
     // Very generous by default: the tactical analysis is the product, so the
     // answer must never be squeezed. Providers bill actual usage, not this
     // ceiling. (OpenRouter pre-reserves maxTokens x price against the account
@@ -78,7 +77,6 @@ export function publicAgentMetadata(agent) {
     provider: sanitizeText(agent.provider),
     model: sanitizeText(agent.model),
     reasoningEffort: sanitizeText(agent.reasoningEffort || ''),
-    ratingKey: sanitizeText(agent.ratingKey || `${agent.provider}:${agent.model}:${agent.reasoningEffort || 'none'}`),
     maxTokens: agent.maxTokens || null,
     temperature: Number.isFinite(agent.temperature) ? agent.temperature : null,
   };
@@ -110,10 +108,9 @@ export async function chooseWithAgent(agent, role, observation, legalActions, co
 
   // Providers occasionally return transient garbage — an empty body, a
   // truncated stream, a 5xx — through no fault of the model's play. Retry
-  // those transport/format failures (some routes flake twice in a row) and
-  // record the retries. Invalid *choices* are a benchmark signal and are
-  // never retried here.
-  const maxAttempts = 3;
+  // those transport/format failures once and record the retries. Invalid
+  // *choices* are a benchmark signal and are never retried here.
+  const maxAttempts = 2;
   for (let attempt = 1; ; attempt += 1) {
     try {
       const decision = await chooser(agent, role, observation, actions, context);
@@ -130,7 +127,12 @@ export async function chooseWithAgent(agent, role, observation, legalActions, co
   }
 }
 
+// Per-model memory of optional knobs (temperature, reasoning) whose presence
+// made OpenRouter's require_parameters routing reject every endpoint.
+const knownShedParameters = new Map();
+
 function reasoningAllowance(effort = '') {
+  if (effort === 'xhigh') return 49152;
   if (effort === 'high') return 32768;
   if (effort === 'medium') return 16384;
   return 12288;
@@ -173,7 +175,7 @@ export function firstSafeAction(legalActions = []) {
   );
 }
 
-export function extractOutputText(body = {}) {
+function extractOutputText(body = {}) {
   if (typeof body.output_text === 'string') return body.output_text;
   if (Array.isArray(body.output)) {
     return body.output
@@ -191,7 +193,7 @@ export function extractOutputText(body = {}) {
   return '';
 }
 
-export function parseJsonObject(text = '') {
+function parseJsonObject(text = '') {
   try {
     return JSON.parse(text);
   } catch {}
@@ -243,7 +245,7 @@ export async function loadAllowedEnvValue(name) {
   return isUsableSecretValue(value) ? value : '';
 }
 
-export function providerKeyEnvName(provider = '') {
+function providerKeyEnvName(provider = '') {
   return PROVIDER_KEY_ENV[String(provider || '').toLowerCase()] || '';
 }
 
@@ -347,8 +349,8 @@ function createModelCallSignal(parentSignal, timeoutMs) {
 }
 
 async function chooseWithOpenAI(agent, role, observation, legalActions, context = {}) {
-  const apiKey = await loadAllowedEnvValue(providerKeyEnvName('openai'));
-  if (!apiKey) throw new Error('OPENAI_API_KEY is not set');
+  const apiKey = agent.apiKey || await loadAllowedEnvValue(providerKeyEnvName('openai'));
+  if (!apiKey) throw new Error('No OpenAI key: add your API key in the arena, or set OPENAI_API_KEY');
 
   const prompt = buildChoicePrompt(role, observation, legalActions);
   const requestBody = {
@@ -357,7 +359,7 @@ async function chooseWithOpenAI(agent, role, observation, legalActions, context 
     max_output_tokens: agent.maxTokens,
     text: {
       format: PromptPipeline.buildOpenAIResponseFormat(legalActions),
-      verbosity: 'low',
+      verbosity: 'high',
     },
   };
   if (agent.reasoningEffort && agent.reasoningEffort !== 'none') {
@@ -433,25 +435,79 @@ async function chooseWithOpenRouter(agent, role, observation, legalActions, cont
   // (structured outputs, reasoning). Hosts that silently drop response_format
   // are the main source of empty/truncated garbage responses.
   requestBody.provider = {require_parameters: true};
+  // Knobs this model's endpoints already rejected this session are omitted
+  // up front — no point re-failing twice per decision.
+  for (const knob of knownShedParameters.get(agent.model) || []) {
+    delete requestBody[knob];
+  }
 
   const startedAt = new Date().toISOString();
   const callSignal = createModelCallSignal(context.signal, context.modelTimeoutMs);
   let body;
+  const shedParameters = [];
   try {
     body = await postOpenRouter(apiKey, requestBody, callSignal.signal);
   } catch (error) {
-    // Non-reasoning models have no endpoint that satisfies a reasoning
-    // parameter under require_parameters; degrade by dropping reasoning
-    // (structured output is non-negotiable) and trying once more.
-    if (requestBody.reasoning && /No endpoints found/i.test(String(error?.message || ''))) {
-      delete requestBody.reasoning;
-      body = await postOpenRouter(apiKey, requestBody, callSignal.signal);
-    } else if (!callSignal.timedOut() && error?.name === 'AbortError') {
-      throw error;
-    } else if (callSignal.timedOut()) {
-      throw new Error(`MODEL_TIMEOUT_MS=${callSignal.timeoutMs}`);
-    } else {
-      throw error;
+    // require_parameters routes only to hosts that support every knob we
+    // send, so an optional knob can exclude EVERY endpoint: GPT-5-class
+    // reasoning models take no temperature dial, and non-reasoning models
+    // take no reasoning parameter. Shed optional knobs one at a time —
+    // temperature first (so reasoning models keep reasoning) — and retry.
+    // Structured output is non-negotiable and never shed.
+    let lastError = error;
+    for (const knob of ['temperature', 'reasoning']) {
+      if (!(knob in requestBody)) continue;
+      if (!/No endpoints found/i.test(String(lastError?.message || ''))) break;
+      delete requestBody[knob];
+      shedParameters.push(knob);
+      try {
+        body = await postOpenRouter(apiKey, requestBody, callSignal.signal);
+        lastError = null;
+        break;
+      } catch (retryError) {
+        lastError = retryError;
+      }
+    }
+    // OpenRouter reserves credits for the full max_tokens up front; a low
+    // balance rejects big reasoning budgets outright ("requires more
+    // credits, or fewer max_tokens"). The rejection states exactly how many
+    // tokens the balance covers ("can only afford N") — clamp straight to
+    // that ground truth (with headroom, since the balance drains as the
+    // match burns tokens) instead of guessing, and halve only if the
+    // message ever stops carrying the number. Never below 4096: a budget
+    // that small starves reasoning, and the failure should surface instead.
+    for (let shrink = 0; shrink < 2 && lastError; shrink += 1) {
+      const message = String(lastError?.message || '');
+      if (!/requires more credits, or fewer max_tokens/i.test(message)) break;
+      const afford = Number(/can only afford (\d+)/i.exec(message)?.[1]);
+      const target = Number.isFinite(afford) && afford > 0
+        ? Math.floor(afford * 0.85)
+        : Math.floor(requestBody.max_tokens / 2);
+      const reduced = Math.max(4096, target);
+      if (reduced >= requestBody.max_tokens) break;
+      requestBody.max_tokens = reduced;
+      shedParameters.push(`max_tokens→${reduced}`);
+      try {
+        body = await postOpenRouter(apiKey, requestBody, callSignal.signal);
+        lastError = null;
+      } catch (retryError) {
+        lastError = retryError;
+      }
+    }
+    if (lastError) {
+      if (!callSignal.timedOut() && lastError?.name === 'AbortError') throw lastError;
+      if (callSignal.timedOut()) throw new Error(`MODEL_TIMEOUT_MS=${callSignal.timeoutMs}`);
+      throw lastError;
+    }
+    if (shedParameters.length) {
+      const known = knownShedParameters.get(agent.model) || new Set();
+      for (const knob of shedParameters) {
+        // Capability facts cache; the max_tokens shrink is balance-dependent
+        // and must be re-derived per call.
+        if (knob === 'temperature' || knob === 'reasoning') known.add(knob);
+      }
+      knownShedParameters.set(agent.model, known);
+      console.warn(`${agent.model}: request rejected over [${shedParameters.join(', ')}]; retried degraded`);
     }
   } finally {
     callSignal.cleanup();
@@ -557,7 +613,7 @@ function chooseWithStandin(agent, role, observation, legalActions) {
       requestedChoice: action?.choice || '',
       choice: action?.choice || '',
       valid: Boolean(action),
-      reason: best ? `${role} picked highest heuristic score ${best.score.toFixed(1)}` : 'no legal action',
+      reason: best ? 'Demo bot — went with its highest-rated option' : 'no legal action',
       scores: scored.slice(0, 8).map(item => ({
         choice: item.action.choice,
         label: item.action.move || item.action.pokemon || item.action.label || item.action.choice,
@@ -810,6 +866,9 @@ function isDisruptionMove(id) {
 function defaultModelFor(provider) {
   if (provider === 'openai') return process.env.OPENAI_MODEL || 'gpt-5.5';
   if (provider === 'openrouter') return process.env.OPENROUTER_MODEL || '~openai/gpt-latest';
+  // The human "agent" is a placeholder identity: the runner never asks it to
+  // choose — choices arrive from the player's own browser socket.
+  if (provider === 'human') return 'human';
   return 'standin-dex-heuristic-v1';
 }
 

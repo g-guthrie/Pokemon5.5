@@ -131,6 +131,31 @@ body[data-hide-controls="1"] .battle-log {
   bottom: 0 !important;
 }
 
+/* Minds mode: the client itself hosts the Model Minds. The battle log is
+   gone; P2's mind takes its real estate on the right and P1 gets a matching
+   column on the left. The client canvas widens to 1260px (310 + 640 + 310)
+   and the field column shifts to the center band. */
+body[data-minds="1"] .battle-log,
+body[data-minds="1"] .battle-log-add,
+body[data-minds="1"] .battle-chat-toggle {
+  display: none !important;
+}
+
+/* The field column: every absolutely-positioned client element that lives in
+   the 640px battle column moves right by the width of the P1 mind column.
+   (.battle is normally at left:-1px, so 309px keeps its 1px border bleed.) */
+body[data-minds="1"] .ps-room .battle { left: 309px !important; }
+body[data-minds="1"] .ps-room .foehint { left: 310px !important; }
+body[data-minds="1"] .ps-room .battle-controls { left: 310px !important; }
+body[data-minds="1"] .ps-room .ally-pokemon { left: 310px !important; }
+
+/* The broadcast stays inert: the battle itself takes no pointer input, but
+   the mind columns scroll (the parent no longer blanket-disables pointer
+   events on this frame). */
+body[data-minds="1"] .ps-room {
+  pointer-events: none;
+}
+
 /* Controls-only frames render just the real native control bar (move/switch
    buttons). The Showdown client renders its room into a .ps-room appended to
    <body> (the #battle-root div is left empty), with the field and controls

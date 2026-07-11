@@ -87,7 +87,7 @@ function eventFromProtocolLine(view, parts, raw) {
   return createPublicEvent(view, parts, raw, text);
 }
 
-function describeProtocolLine(parts) {
+export function describeProtocolLine(parts) {
   const tag = parts[0];
   if (tag === 'start') return 'Battle started.';
   if (tag === 'turn') return `Turn ${parts[1]}.`;

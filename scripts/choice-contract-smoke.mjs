@@ -45,6 +45,13 @@ assert(doubleForcedActions.every(action => {
   return switches.length === new Set(switches).size;
 }), 'double forced switches must not choose the same bench Pokemon twice');
 
+// Double faint with a single healthy bench mon: the only legal answer is
+// "switch N, pass" — never zero actions (which hangs the match runner).
+const lastMonForcedActions = getLegalActions(createLastMonForceSwitchRequest());
+assert(lastMonForcedActions.length > 0, 'double forced switch with one bench mon must still offer a choice');
+assert(lastMonForcedActions.some(action => action.choice === 'switch 6, pass'), 'last-mon double forced switch should fill slot 1 and pass slot 2');
+assert(!lastMonForcedActions.some(action => action.choice === 'pass, pass'), 'last-mon double forced switch must not offer a full pass');
+
 const faintedActions = getLegalActions(createDoublesRequest({faintFirstActive: true}));
 assert(faintedActions.some(action => action.choice.startsWith('pass, move')), 'fainted active slot should pass while partner acts');
 
@@ -92,6 +99,23 @@ function createDoublesRequest(options = {}) {
         pokemon('p1b: Beta', true, '100/100'),
         pokemon('p1: Gamma', false, '100/100'),
         pokemon('p1: Delta', false, '100/100'),
+        pokemon('p1: Epsilon', false, '0 fnt'),
+        pokemon('p1: Zeta', false, '100/100'),
+      ],
+    },
+  };
+}
+
+function createLastMonForceSwitchRequest() {
+  return {
+    rqid: 3,
+    forceSwitch: [true, true],
+    side: {
+      pokemon: [
+        pokemon('p1a: Alpha', true, '0 fnt'),
+        pokemon('p1b: Beta', true, '0 fnt'),
+        pokemon('p1: Gamma', false, '0 fnt'),
+        pokemon('p1: Delta', false, '0 fnt'),
         pokemon('p1: Epsilon', false, '0 fnt'),
         pokemon('p1: Zeta', false, '100/100'),
       ],
