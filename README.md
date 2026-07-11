@@ -482,6 +482,12 @@ The server is multi-tenant: every browser gets a persistent session ID
 (localStorage) and its own battle (`s-<session>`), run slot, and series
 records.
 
+The checked-in `render.yaml` defines a free Render web service. A Render
+Blueprint deployment builds the Docker image directly from this repository;
+the image pins and fetches both upstream Showdown repositories during the build.
+Free instances have ephemeral storage, so match artifacts and series records
+reset when the service sleeps, restarts, or redeploys.
+
 ```sh
 docker build -t showdown-llm-arena .
 docker run -p 8123:8123 -v arena-artifacts:/app/artifacts showdown-llm-arena

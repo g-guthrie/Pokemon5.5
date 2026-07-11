@@ -1,11 +1,21 @@
 # Showdown LLM Arena — production image.
-# The vendored Showdown simulator + client must be built inside the image so
-# the container is self-contained (no host node_modules leak in).
+# The Showdown simulator + client are pinned and built inside the image so a
+# fresh GitHub checkout is sufficient; vendor/ remains a local-only cache.
 FROM node:22-slim AS build
 WORKDIR /app
+ARG SHOWDOWN_COMMIT=84636bcc780f5bfcf91985f210d5c1bec9bb43ae
+ARG SHOWDOWN_CLIENT_COMMIT=6d6e8748a66e9e5c9e0246296a52e73a7868b581
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates git \
+ && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
-COPY vendor ./vendor
+RUN mkdir -p vendor \
+ && git clone --filter=blob:none https://github.com/smogon/pokemon-showdown.git vendor/pokemon-showdown \
+ && git -C vendor/pokemon-showdown checkout "$SHOWDOWN_COMMIT" \
+ && git clone --filter=blob:none https://github.com/smogon/pokemon-showdown-client.git vendor/pokemon-showdown-client \
+ && git -C vendor/pokemon-showdown-client checkout "$SHOWDOWN_CLIENT_COMMIT" \
+ && rm -rf vendor/pokemon-showdown/.git vendor/pokemon-showdown-client/.git
 RUN npm --prefix vendor/pokemon-showdown install \
  && npm --prefix vendor/pokemon-showdown run build \
  && npm --prefix vendor/pokemon-showdown-client install \

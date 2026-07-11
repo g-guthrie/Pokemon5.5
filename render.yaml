@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: pokemon-showdown-model-arena
+    runtime: docker
+    plan: free
+    autoDeployTrigger: commit
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "1"
+      - key: MAX_CONCURRENT_RUNS
+        value: "3"
