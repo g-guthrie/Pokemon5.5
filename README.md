@@ -1,8 +1,9 @@
 # Pokemon Showdown Model Arena
 
-Local benchmark harness for model-vs-model Pokemon Showdown battles. The default
-format is official `[Gen 9] Random Doubles Battle` (`gen9randomdoublesbattle`)
-using the vendored Showdown server simulator, random team generator, and client.
+Public-ready benchmark arena for model-vs-model Pokemon Showdown battles. The
+default format is official `[Gen 9] Random Doubles Battle`
+(`gen9randomdoublesbattle`) using local checkouts of the Showdown server
+simulator, random team generator, and client.
 
 ## What Is Here
 
@@ -30,12 +31,19 @@ using the vendored Showdown server simulator, random team generator, and client.
 ## Setup
 
 ```sh
+mkdir -p vendor
+git clone --depth 1 https://github.com/smogon/pokemon-showdown.git vendor/pokemon-showdown
+git clone --depth 1 https://github.com/smogon/pokemon-showdown-client.git vendor/pokemon-showdown-client
 npm install
 npm run setup:showdown
 npm start
 ```
 
 Open `http://localhost:3107`.
+
+The two upstream Showdown repositories and generated `artifacts/` are ignored
+by this repository. Clone the upstream projects before local setup or before
+building the Docker image from a fresh GitHub checkout.
 
 ## LLM Arena
 
@@ -54,8 +62,11 @@ the header tracks whose controls are on screen. Every structured choice a
 model submits is re-enacted by a cursor pressing the actual native buttons —
 moves, targets, switches, Terastallize — inside the real client UI. Each
 side's "model mind" panel shows the structured tactical analysis behind the
-choice (board read, win paths, setup lines, sweep plans, threats, candidate
-choices, risk, and the final choice).
+choice. For a normal turn, prompt v9 walks through the board, revealed set
+archetypes, known unknowns, opponent plan, immediate threats, win and loss
+conditions, Tera and switching, candidate choices, projected outcomes, and a
+final robustness check. Forced replacements use a focused three-part appraisal
+of matchups, risks, and the plan enabled by the chosen send-in.
 
 **You can take the controls yourself**: pick "🎮 You" as Player 1 and the
 decision deck stops re-enacting and becomes your actual controls — click a
@@ -99,7 +110,7 @@ larger response budget.
 ## Secrets
 
 Do not put API keys in prompts, source files, artifacts, command output, or docs.
-CLI and operator workflows use local environment values:
+CLI workflows use local environment values:
 
 ```sh
 OPENAI_API_KEY=...
@@ -219,7 +230,7 @@ curl -X POST http://localhost:3107/api/tournament -H 'content-type: application/
 
 Only one live run, ladder, tournament, or benchmark runs at a time from the
 browser server, so the visible `local` Showdown clients always represent one
-operator workflow.
+active workflow.
 
 ## OpenRouter Top-10 Benchmark Suite
 
@@ -365,31 +376,36 @@ Models receive `state.extracted`, a `PlayerObservation` with:
   revealed moves, revealed abilities, item reveal/consume state, and tera reveal;
 - `source.opponentHiddenTeamIncluded: false`.
 
-Models return JSON using `showdown-choice-response.v6`. The analysis fields are
+Models return JSON using `showdown-choice-response.v9`. The analysis fields are
 short tactical notes for auditability, not free-form hidden chain-of-thought:
 
 ```json
 {
   "gameStateSummary": ["board and pressure summary"],
-  "winConditions": ["path to win from known information"],
-  "loseConditions": ["most imminent way to lose and whether it is live this turn"],
-  "setupLines": ["possible setup/support plan"],
-  "sweepPlans": ["damage or cleaning plan"],
-  "safeSwitches": ["safe pivot or why staying in is better"],
+  "setArchetypes": ["confirmed and inferred roles of each revealed Pokemon"],
+  "unknownInformation": ["credible unknown sets, speed tiers, items, and abilities"],
   "opponentLikelyPlan": ["likely opponent action from revealed info"],
   "biggestThreats": ["immediate threat to cover"],
-  "riskAssessment": ["main risk of the selected plan"],
-  "candidateChoices": ["exact legal choice: upside; risk"],
+  "winConditions": ["path to win from known information"],
+  "loseConditions": ["sequences that lose and what must be prevented now"],
+  "teraAndSwitchCheck": ["whether either active should Tera or switch"],
+  "candidateChoices": ["exact legal choice: how it advances or covers the plan"],
+  "candidateOutcomes": ["projected lines against likely and dangerous replies"],
+  "decisionCheck": ["robustness, resource, flexibility, and follow-up check"],
   "choice": "move 1 1, move 2 2",
   "reason": "short final justification"
 }
 ```
 
+When every legal action is a forced send-in, response v9 instead requires
+`replacementMatchups`, `replacementRisks`, and `replacementPlan` before the
+exact `choice` and final `reason`.
+
 `choice` must exactly match one `legalActions[]` string. Invalid choices,
 API failures, max-turn caps, and fallbacks are counted in the artifact and make
 `validBenchmark` false.
 
-The prompt uses `showdown-choice-prompt.v7` and includes the exact legal choice
+The prompt uses `showdown-choice-prompt.v9` and includes the exact legal choice
 strings, a compact atomic legal-action catalog, full own-team private data
 (including bench stats), visible opponent-only known data, field/side
 conditions with turn counters and standard durations, the visible battle
@@ -406,10 +422,12 @@ status-turn counters, and explicit revealed/unrevealed team counts. The
 briefing separates own active/bench, revealed opponent active/team, the current
 active board, available own bench, fainted resources, field state, recent log,
 legal choice semantics, and explicit known-unknown boundaries. The response
-order requires public tactical notes covering board state, win paths, imminent
-lose conditions, setup, sweeping, switches, held-item implications, opponent
-plans, threats, risk, and a concrete comparison of candidate exact legal
-choices before the final exact legal choice. Benchmark
+order requires public tactical notes that separate confirmed information from
+inference, appraise revealed set archetypes, preserve explicit unknowns, predict
+the opponent, identify threats and win/loss conditions, weigh Tera and ordinary
+switches, compare exact legal choices, project their likely outcomes, and check
+the selected line for robustness before the final exact legal choice. Forced
+replacement requests use their smaller matchup/risk/follow-up schema. Benchmark
 seeds stay in artifacts and UI status, not in the model-facing prompt payload.
 
 ## Artifact Shape
@@ -525,18 +543,20 @@ npm run smoke
 npm run smoke:extractor
 npm run smoke:control
 npm run smoke:ws
+npm run smoke:lazy-battle
 npm run smoke:choices
 npm run smoke:legal-canonical
 npm run smoke:hidden
 npm run smoke:runner
 npm run smoke:isolation
 npm run smoke:usage
+npm run smoke:stale-state
 npm run smoke:events
 npm run smoke:repro
 npm run smoke:prompt
 npm run smoke:live
+npm run smoke:human
 npm run smoke:frontend
-npm run smoke:localhost
 npm run smoke:provider-config
 npm run smoke:provider-artifact
 npm run smoke:abort
@@ -555,26 +575,29 @@ Showdown requests across several deterministic seeds, including targeted moves,
 switching, Terastallize, and an actual force-switch request, and fails if the
 vendored Showdown engine rejects any generated command. Set
 `LEGAL_CANONICAL_SEEDS='1,2,3,4;11,22,33,44'` to override the seed set.
-`smoke:hidden` asserts hidden opponent species do not leak through
+`smoke:lazy-battle` proves a waiting websocket can attach before its isolated
+battle exists and receive state when that battle is created. `smoke:hidden`
+asserts hidden opponent species do not leak through
 `PlayerObservation`. `smoke:runner` proves selected actions are exact legal
 choices and are linked to their source observation/model call in the artifact.
 `smoke:isolation` proves two battles with different seeds can run independently
 on the same local server. `smoke:usage` proves OpenAI/OpenRouter-style usage
-objects normalize into stable token/cost summaries. `smoke:events` proves the
-JSONL stream is ordered, parseable, and carries legal choice and hidden-info
-markers without duplicating full prompts. `smoke:repro` proves same-seed battles
-produce identical full team snapshots and team hashes in artifacts. `smoke:prompt`
-proves the model prompt contains the screen-equivalent context, exact legal
-choices, hidden-info marker, and required tactical response fields without
-exposing the benchmark seed. `smoke:live` proves the browser-attached `/api/run`
+objects normalize into stable token/cost summaries. `smoke:stale-state` covers
+picker refresh, Model Mind shaping, and state that must not leak across
+matchups. `smoke:events` proves the JSONL stream is ordered, parseable, and
+carries legal choice and hidden-info markers without duplicating full prompts.
+`smoke:repro` proves same-seed battles produce identical full team snapshots and
+team hashes in artifacts. `smoke:prompt` proves the model prompt contains the
+screen-equivalent context, exact legal choices, hidden-info marker, turn and
+replacement schemas, and required tactical fields without exposing the
+benchmark seed. `smoke:live` proves the browser-attached `/api/run`
 path can complete a stand-in model battle on the visible `local` battle and write
 match/event artifacts. `smoke:frontend` uses headless Chrome against a temporary
 local server to write `artifacts/frontend-screenshot-smoke.png` and prove the
-rendered browser UI contains both player observations, the official doubles
-format, capped quick-pick legal choices, model controls, ladder/tournament
-controls, and the artifact lab. `smoke:localhost` uses headless Chrome against a
-currently running `http://localhost:3107` server and writes
-`artifacts/localhost-3107-smoke.png` for live dashboard verification.
+rendered arena and native-client frame contain the setup flow, live stage,
+matchup controls, Model Mind placeholders, responsive layout, and expected
+production assets. `smoke:localhost` is an optional check against an already
+running `http://localhost:3107` server; it is not part of `npm run verify`.
 `smoke:provider-config` proves provider keys are env-only
 and that fake OpenAI/OpenRouter calls do not leak keys or seeds into prompts.
 `smoke:provider-artifact` runs fake OpenAI and OpenRouter adapters through the
