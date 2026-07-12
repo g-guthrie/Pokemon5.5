@@ -1049,6 +1049,7 @@ function suggestRealModels() {
 const KEY_STORAGE = 'arena-openrouter-key';
 let keyValidationVersion = 0;
 let keyValidationPending = false;
+let creditRetryAfterKey = false;
 
 function storedKey() {
   return localStorage.getItem(KEY_STORAGE) || '';
@@ -1086,6 +1087,11 @@ function renderKeyPanel(state, facts = {}) {
       renderLiveRun();
     }
     renderCreditTicker();
+    if (creditRetryAfterKey && live?.run?.creditPause) {
+      creditRetryAfterKey = false;
+      closeKeyModal();
+      void retryCreditPause();
+    }
     return;
   }
   keyValid = false;
@@ -1251,6 +1257,56 @@ async function refreshCredits() {
   renderCreditTicker();
 }
 
+function renderCreditPause(run) {
+  const modal = $('credit-modal');
+  const pause = run?.creditPause;
+  modal.classList.toggle('hidden', !pause || keyModalOpen());
+  if (!pause) return;
+  const roles = (pause.roles || []).map(role => role === 'p2' ? 'Player 2' : 'Player 1');
+  const who = roles.length ? roles.join(' and ') : 'A model';
+  $('credit-modal-message').textContent = `${who} ran out of credits${pause.turn ? ` on turn ${pause.turn}` : ''}. Add credits or choose how this match should continue.`;
+}
+
+function setCreditActionsDisabled(disabled) {
+  for (const id of ['credit-retry', 'credit-change-key', 'credit-fallback', 'credit-end']) {
+    $(id).disabled = disabled;
+  }
+}
+
+async function retryCreditPause() {
+  if (!storedKey() || !keyValid) {
+    creditRetryAfterKey = true;
+    $('credit-modal').classList.add('hidden');
+    openKeyModal();
+    return;
+  }
+  setCreditActionsDisabled(true);
+  const ok = await liveCommand({command: 'credits-retry', openrouterKey: storedKey()});
+  setCreditActionsDisabled(false);
+  if (ok) void refreshCredits();
+}
+
+$('credit-retry').addEventListener('click', () => void retryCreditPause());
+$('credit-change-key').addEventListener('click', () => {
+  creditRetryAfterKey = true;
+  keyValidationVersion += 1;
+  localStorage.removeItem(KEY_STORAGE);
+  keyValid = false;
+  renderKeyPanel('entry');
+  $('credit-modal').classList.add('hidden');
+  openKeyModal();
+});
+$('credit-fallback').addEventListener('click', async () => {
+  setCreditActionsDisabled(true);
+  await liveCommand({command: 'credits-fallback'});
+  setCreditActionsDisabled(false);
+});
+$('credit-end').addEventListener('click', async () => {
+  setCreditActionsDisabled(true);
+  await liveCommand({command: 'stop'});
+  setCreditActionsDisabled(false);
+});
+
 /* ---------------- battle sound ---------------- */
 
 // Sound comes from the base battle frame's native Showdown client. Default
@@ -1338,6 +1394,7 @@ function closeKeyModal() {
   keyPanelHome?.appendChild($('key-panel'));
   $('key-modal').classList.add('hidden');
   $('key-button').classList.remove('on');
+  renderCreditPause(live.run);
 }
 
 $('key-button').addEventListener('click', () => (keyModalOpen() ? closeKeyModal() : openKeyModal()));
@@ -1938,6 +1995,7 @@ async function pollLiveRun() {
 
 function renderLiveRun() {
   const run = live.run;
+  renderCreditPause(run);
   const active = isActiveRun(run);
   const status = run ? run.status : 'idle';
   const mode = run ? (run.allowFallback ? 'exhibition' : 'rated') : '';
@@ -2027,8 +2085,9 @@ function renderLiveRun() {
   for (const [role, spec] of [['p1', specP1], ['p2', specP2]]) {
     const rolePhase = run?.roleStates?.[role]?.phase || (active ? 'preparing' : 'waiting');
     const meta = {who: shortName(spec)};
-    if (['thinking', 'decision-ready', 'error'].includes(rolePhase)) {
-      meta.chip = rolePhase === 'decision-ready' ? 'decision ready' : rolePhase;
+    if (['thinking', 'decision-ready', 'credits-exhausted', 'error'].includes(rolePhase)) {
+      meta.chip = rolePhase === 'decision-ready' ? 'decision ready' :
+        rolePhase === 'credits-exhausted' ? 'credits exhausted' : rolePhase;
       meta.fresh = rolePhase === 'decision-ready';
     } else if (run && !active) {
       // The game is over: give the chip a terminal state. Otherwise it keeps

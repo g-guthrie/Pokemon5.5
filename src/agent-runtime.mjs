@@ -296,9 +296,17 @@ async function postOpenRouter(apiKey, requestBody, signal) {
   }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(providerErrorMessage('OpenRouter', response.status, body));
+    const message = providerErrorMessage('OpenRouter', response.status, body);
+    if (isInsufficientCreditsMessage(message)) {
+      throw new InsufficientCreditsError(message, {status: response.status});
+    }
+    throw new Error(message);
   }
   return body;
+}
+
+function isInsufficientCreditsMessage(message = '') {
+  return /requires more credits|insufficient credits|not enough credits|can only afford \d+/i.test(String(message));
 }
 
 // Providers wrap upstream errors ("Provider returned error") in ways that
@@ -894,5 +902,14 @@ export class InvalidModelChoiceError extends Error {
     super(message);
     this.name = 'InvalidModelChoiceError';
     this.call = call;
+  }
+}
+
+export class InsufficientCreditsError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = 'InsufficientCreditsError';
+    this.code = 'INSUFFICIENT_CREDITS';
+    this.status = Number(details.status || 0) || null;
   }
 }

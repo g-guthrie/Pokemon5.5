@@ -35,6 +35,7 @@ export async function runWebSocketMatch(options = {}) {
   const onObservation = typeof options.onObservation === 'function' ? options.onObservation : null;
   const onModelCall = typeof options.onModelCall === 'function' ? options.onModelCall : null;
   const onAction = typeof options.onAction === 'function' ? options.onAction : null;
+  const onInsufficientCredits = typeof options.onInsufficientCredits === 'function' ? options.onInsufficientCredits : null;
   // Floor high enough that paid models thinking for tens of seconds per
   // decision never hit the match timeout with default settings.
   const timeoutMs = Number(options.timeoutMs ?? Math.max(120000, maxTurns * Math.max(moveDelayMs, 50) * 8));
@@ -246,7 +247,6 @@ export async function runWebSocketMatch(options = {}) {
     try {
       decision = await chooseWithAgent(agent, client.role, observation, legalActions, {allowFallback, signal, modelTimeoutMs});
     } catch (error) {
-      client.choosing.delete(choiceKey);
       const metadata = publicAgentMetadata(agent);
       const call = error.call || {
         at: new Date().toISOString(),
@@ -267,9 +267,10 @@ export async function runWebSocketMatch(options = {}) {
       // One failed decision is one record: the safe fallback move is folded
       // into this same call rather than pushed as a second wrapped copy,
       // which double counted the failure in invalid/fallback/usage totals.
-      const action = allowFallback ? firstSafeAction(legalActions) : null;
-      if (action) {
-        call.choice = action.choice;
+      const creditPause = error.name === 'InsufficientCreditsError' && onInsufficientCredits;
+      let fallbackAction = allowFallback && !creditPause ? firstSafeAction(legalActions) : null;
+      if (fallbackAction) {
+        call.choice = fallbackAction.choice;
         call.fallback = true;
         run.fallbackCount += 1;
       }
@@ -277,7 +278,36 @@ export async function runWebSocketMatch(options = {}) {
       run.usage = summarizeUsage(run.modelCalls);
       recordedCallIndex = run.modelCalls.length - 1;
       notify(onModelCall, {run, call, callIndex: recordedCallIndex, observationRecord});
-      if (!allowFallback) {
+      if (creditPause) {
+        const recovery = await onInsufficientCredits({
+          run,
+          role: client.role,
+          turn: state.turn,
+          requestId,
+          error: sanitizeText(error.message),
+        });
+        if (recovery?.action === 'retry') {
+          if (recovery.apiKey) agent.apiKey = String(recovery.apiKey);
+          client.choosing.delete(choiceKey);
+          await handleState(client, state);
+          return;
+        }
+        if (recovery?.action === 'fallback') {
+          fallbackAction = firstSafeAction(legalActions);
+          if (!fallbackAction) {
+            await finish({winner: null, turn: state.turn, reason: 'INSUFFICIENT_CREDITS', error: sanitizeText(error.message)});
+            return;
+          }
+          call.choice = fallbackAction.choice;
+          call.fallback = true;
+          run.fallbackCount += 1;
+          decision = {action: fallbackAction, call};
+        } else {
+          await finish({winner: null, turn: state.turn, reason: 'INSUFFICIENT_CREDITS', error: sanitizeText(error.message)});
+          return;
+        }
+      }
+      if (!decision && !allowFallback) {
         await finish({
           winner: null,
           turn: state.turn,
@@ -285,8 +315,9 @@ export async function runWebSocketMatch(options = {}) {
           error: sanitizeText(error.message),
         });
         return;
+      } else if (!decision) {
+        decision = {action: fallbackAction, call};
       }
-      decision = {action, call};
     }
 
     client.choosing.delete(choiceKey);

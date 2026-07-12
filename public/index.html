@@ -214,6 +214,22 @@
         <div id="key-modal-body"></div>
       </div>
     </div>
+    <div id="credit-modal" class="key-modal hidden" role="dialog" aria-modal="true" aria-label="OpenRouter credits exhausted">
+      <div class="key-modal-card credit-modal-card">
+        <header><span>&#9888;&#65039; Match paused</span></header>
+        <div class="credit-modal-body">
+          <h2>OpenRouter credits ran out</h2>
+          <p id="credit-modal-message"></p>
+          <p class="credit-modal-note">The battle position is preserved and no automatic move will be submitted unless you choose it.</p>
+          <div class="credit-modal-actions">
+            <button class="primary" id="credit-retry">I added credits — retry</button>
+            <button id="credit-change-key">Use another key</button>
+            <button id="credit-fallback">Continue with automatic moves</button>
+            <button class="danger" id="credit-end">End match</button>
+          </div>
+        </div>
+      </div>
+    </div>
     <!-- mind-card.js is the single source of the Model Mind sections and
          reveal pacing; arena.js reads window.ArenaMind instead of mirroring
          those constants. -->

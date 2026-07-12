@@ -335,7 +335,24 @@ async function handleRunRequest(req, res) {
     }
     if (command === 'resume') {
       if (!isRunActive(liveRun)) throw new Error('No active run to resume');
+      if (liveRun.creditPause) throw new Error('Resolve the OpenRouter credit pause before resuming');
       resumeLiveRun(liveRun);
+      sendJson(res, {ok: true, run: summarizeLiveRun(liveRun)});
+      return;
+    }
+    if (command === 'credits-retry') {
+      if (!isRunActive(liveRun) || !liveRun.creditPause) throw new Error('No credit pause to retry');
+      const keys = normalizeProviderKeys(body);
+      const apiKey = keys.openrouter || liveRun.providerKeys.openrouter || '';
+      if (!apiKey) throw new Error('Add a valid OpenRouter key before retrying');
+      liveRun.providerKeys.openrouter = apiKey;
+      resolveCreditPause(liveRun, {action: 'retry', apiKey});
+      sendJson(res, {ok: true, run: summarizeLiveRun(liveRun)});
+      return;
+    }
+    if (command === 'credits-fallback') {
+      if (!isRunActive(liveRun) || !liveRun.creditPause) throw new Error('No credit pause to continue');
+      resolveCreditPause(liveRun, {action: 'fallback'});
       sendJson(res, {ok: true, run: summarizeLiveRun(liveRun)});
       return;
     }
@@ -349,6 +366,7 @@ async function handleRunRequest(req, res) {
       if (!isRunActive(liveRun)) throw new Error('No active run to stop');
       liveRun.status = 'stopping';
       liveRun.paused = false;
+      resolveCreditPause(liveRun, {action: 'stop'}, {resume: false});
       resumeLiveRun(liveRun);
       liveRun.abortController.abort();
       sendJson(res, {ok: true, run: summarizeLiveRun(liveRun)});
@@ -418,6 +436,8 @@ function startLiveRun(body = {}, sessionId = '') {
     providerKeys: normalizeProviderKeys(body),
     paused: Boolean(body.startPaused),
     pauseWaiters: [],
+    creditPause: null,
+    creditWaiters: [],
     abortController: new AbortController(),
     result: null,
     error: '',
@@ -1118,6 +1138,7 @@ async function runLiveMatch(run) {
     run.status = run.abortController.signal.aborted ? 'stopped' : 'error';
     run.error = sanitizeText(error?.message || error);
   } finally {
+    resolveCreditPause(run, {action: 'stop'}, {resume: false});
     // The browser remains the sole long-lived owner of visitor credentials.
     // The per-run server copy exists only while provider calls can use it.
     run.providerKeys = {};
@@ -1185,6 +1206,7 @@ function runLiveGame(run, outputPath, game) {
           };
         }
       },
+      onInsufficientCredits: details => waitForCreditRecovery(run, details),
       agents: {
         p1: run.agentP1,
         p2: run.agentP2,
@@ -1192,6 +1214,33 @@ function runLiveGame(run, outputPath, game) {
       providerKeys: run.providerKeys,
       sessionId: run.sessionId,
   });
+}
+
+function waitForCreditRecovery(run, details = {}) {
+  const role = details.role === 'p2' ? 'p2' : 'p1';
+  const roles = new Set(run.creditPause?.roles || []);
+  roles.add(role);
+  run.creditPause = {
+    active: true,
+    roles: [...roles],
+    turn: Number(details.turn || run.currentTurn || 0),
+    message: sanitizeText(details.error || 'OpenRouter credits are insufficient').slice(0, 500),
+    at: run.creditPause?.at || new Date().toISOString(),
+  };
+  run.paused = true;
+  run.status = 'paused';
+  run.roleStates[role] = {...run.roleStates[role], phase: 'credits-exhausted'};
+  return new Promise(resolve => run.creditWaiters.push(resolve));
+}
+
+function resolveCreditPause(run, resolution, options = {}) {
+  if (!run) return;
+  const waiters = (run.creditWaiters || []).splice(0);
+  run.creditPause = null;
+  run.paused = false;
+  if (options.resume !== false && run.status === 'paused') run.status = 'running';
+  for (const resolve of waiters) resolve(resolution);
+  if (options.resume !== false) resumeLiveRun(run);
 }
 
 // Between games the telemetry restarts: the viewer's turn counter, boards,
@@ -1544,6 +1593,13 @@ function summarizeLiveRunFields(run) {
     apiErrorCount: run.apiErrorCount || 0,
     fallbackCount: run.fallbackCount || 0,
     invalidChoiceCount: run.invalidChoiceCount || 0,
+    creditPause: run.creditPause ? {
+      active: true,
+      roles: Array.isArray(run.creditPause.roles) ? run.creditPause.roles.slice(0, 2) : [],
+      turn: Number(run.creditPause.turn || 0),
+      message: sanitizeText(run.creditPause.message || '').slice(0, 500),
+      at: run.creditPause.at || '',
+    } : null,
     lastObservation: run.lastObservation || null,
     lastBoards: run.lastBoards || null,
     lastModelCall: run.lastModelCall || null,

@@ -35,6 +35,7 @@ const smokeCommands = [
   ['runner', ['npm', 'run', 'smoke:runner']],
   ['isolation', ['npm', 'run', 'smoke:isolation']],
   ['usage', ['npm', 'run', 'smoke:usage']],
+  ['credits-exhausted', ['npm', 'run', 'smoke:credits']],
   ['stale-state', ['npm', 'run', 'smoke:stale-state']],
   ['events', ['npm', 'run', 'smoke:events']],
   ['reproducibility', ['npm', 'run', 'smoke:repro']],

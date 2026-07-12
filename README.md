@@ -556,6 +556,7 @@ npm run smoke:hidden
 npm run smoke:runner
 npm run smoke:isolation
 npm run smoke:usage
+npm run smoke:credits
 npm run smoke:stale-state
 npm run smoke:events
 npm run smoke:repro
@@ -588,7 +589,10 @@ asserts hidden opponent species do not leak through
 choices and are linked to their source observation/model call in the artifact.
 `smoke:isolation` proves two battles with different seeds can run independently
 on the same local server. `smoke:usage` proves OpenAI/OpenRouter-style usage
-objects normalize into stable token/cost summaries. `smoke:stale-state` covers
+objects normalize into stable token/cost summaries. `smoke:credits` proves an
+OpenRouter credit rejection remains a typed condition and that the paused match
+offers explicit retry, key-change, automatic-move, and end-match actions without
+making a paid call. `smoke:stale-state` covers
 picker refresh, Model Mind shaping, and state that must not leak across
 matchups. `smoke:events` proves the JSONL stream is ordered, parseable, and
 carries legal choice and hidden-info markers without duplicating full prompts.

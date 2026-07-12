@@ -29,6 +29,7 @@
     "smoke:runner": "node scripts/runner-contract-smoke.mjs",
     "smoke:isolation": "node scripts/isolation-smoke.mjs",
     "smoke:usage": "node scripts/usage-contract-smoke.mjs",
+    "smoke:credits": "node scripts/credits-exhausted-smoke.mjs",
     "smoke:stale-state": "node scripts/stale-state-smoke.mjs",
     "smoke:events": "node scripts/event-log-smoke.mjs",
     "smoke:repro": "node scripts/reproducibility-smoke.mjs",
