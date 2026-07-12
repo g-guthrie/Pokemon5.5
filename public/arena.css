@@ -1674,11 +1674,15 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
   inset: 0;
   z-index: 4;
   display: flex;
-  align-items: center;
-  justify-content: center;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 4px;
+  /* The "at who?" label takes a full-width row of its own (below); the target
+     cards wrap onto the row beneath it. align-content centers the two rows as
+     a group so nothing lands on top of the label. */
+  align-items: center;
+  align-content: center;
+  justify-content: center;
+  gap: 3px 6px;
+  padding: 3px;
   border-radius: inherit;
   background: rgba(9, 15, 30, 0.9);
   opacity: 0;
@@ -1692,9 +1696,10 @@ button.ghost:disabled { opacity: 0.4; cursor: default; }
 }
 
 .deck-aim-label {
-  position: absolute;
-  top: 3px;
-  left: 8px;
+  /* Own full-width row at the top of the flyout — never overlapped by the
+     target cards, which wrap onto the next row. */
+  flex: 0 0 100%;
+  text-align: center;
   font: 800 8px/1 var(--sans);
   letter-spacing: 1px;
   text-transform: uppercase;
