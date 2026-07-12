@@ -2030,6 +2030,18 @@ function renderLiveRun() {
     if (['thinking', 'decision-ready', 'error'].includes(rolePhase)) {
       meta.chip = rolePhase === 'decision-ready' ? 'decision ready' : rolePhase;
       meta.fresh = rolePhase === 'decision-ready';
+    } else if (run && !active) {
+      // The game is over: give the chip a terminal state. Otherwise it keeps
+      // whatever mid-turn value it last held ("presenting analysis…",
+      // "thinking…"), which reads like the mind is still waiting for a turn
+      // that will never come.
+      meta.fresh = false;
+      if (run.status === 'stopped') meta.chip = 'stopped';
+      else if (run.status === 'error') meta.chip = 'error';
+      else {
+        const winnerSide = winningSideOf(run);
+        meta.chip = winnerSide === role ? '🏆 winner' : winnerSide ? 'defeated' : 'game over';
+      }
     } else if (!run) {
       meta.chip = 'waiting';
       meta.fresh = false;
@@ -2190,6 +2202,18 @@ function countRunWins(run) {
     else if (game.winnerRole === 'p2') wins.p2 += 1;
   }
   return wins;
+}
+
+// The winning side of a finished run: the series record for a multi-game run,
+// the last game's winner for a single game. null for a draw / no result.
+function winningSideOf(run) {
+  if (!run) return null;
+  if ((run.games?.length || 0) > 1) {
+    const wins = countRunWins(run);
+    return wins.p1 > wins.p2 ? 'p1' : wins.p2 > wins.p1 ? 'p2' : null;
+  }
+  return run.result?.winnerRole
+    || (run.result?.winner === 'Benchmark P1' ? 'p1' : run.result?.winner === 'Benchmark P2' ? 'p2' : null);
 }
 
 async function liveCommand(body) {
